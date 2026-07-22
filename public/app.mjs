@@ -376,10 +376,9 @@ async function recognizePage(pageNumber, settings) {
   }
 
   const canvas = await renderOcrCanvas(page, settings.dpi);
-  // Tesseract.js converts HTMLCanvasElement via canvas.toBlob(). Some Safari/WebKit
-  // builds expose an incomplete implementation and fail before the image reaches
-  // the OCR worker. A PNG data URL follows a separate, broadly supported path.
-  const useDataUrlTransport = browserEnvironment.isSafari || !browserCapabilities.canvasToBlob;
+  // Use the normal Canvas path when available. Data URL remains a compatibility
+  // fallback for browsers that do not provide the toBlob method Tesseract uses.
+  const useDataUrlTransport = !browserCapabilities.canvasToBlob;
   const ocrInput = useDataUrlTransport ? canvas.toDataURL("image/png") : canvas;
   const recognition = await state.worker.recognize(
     ocrInput,

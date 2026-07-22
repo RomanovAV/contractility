@@ -17,11 +17,19 @@ export function flattenOcrLines(blocks, imageWidth, imageHeight) {
   }
 
   const lines = [];
-  for (const block of blocks) {
-    for (const paragraph of block.paragraphs ?? []) {
-      for (const line of paragraph.lines ?? []) {
-        const text = normalizeWhitespace(line.text);
-        const bbox = line.bbox;
+  // OCR data crosses a Worker boundary and has an external nested shape. Guard
+  // every collection and use indexed access so WebKit does not need iterator
+  // methods while post-processing the worker response.
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const block = blocks[blockIndex];
+    const paragraphs = block && Array.isArray(block.paragraphs) ? block.paragraphs : [];
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      const paragraph = paragraphs[paragraphIndex];
+      const paragraphLines = paragraph && Array.isArray(paragraph.lines) ? paragraph.lines : [];
+      for (let lineIndex = 0; lineIndex < paragraphLines.length; lineIndex += 1) {
+        const line = paragraphLines[lineIndex];
+        const text = normalizeWhitespace(line?.text);
+        const bbox = line?.bbox;
         if (!text || !bbox) {
           continue;
         }

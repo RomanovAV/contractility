@@ -34,6 +34,29 @@ test("flattenOcrLines returns normalized evidence coordinates", () => {
   }]);
 });
 
+test("flattenOcrLines does not depend on nested array iterators", () => {
+  const lines = [{
+    text: "Строка Safari",
+    confidence: 90,
+    bbox: { x0: 10, y0: 20, x1: 110, y1: 60 },
+  }];
+  const paragraphs = [{ lines }];
+  const blocks = [{ paragraphs }];
+  lines[Symbol.iterator] = undefined;
+  paragraphs[Symbol.iterator] = undefined;
+  blocks[Symbol.iterator] = undefined;
+
+  assert.deepEqual(flattenOcrLines(blocks, 200, 100), [{
+    text: "Строка Safari",
+    confidence: 90,
+    bbox: { x: 0.05, y: 0.2, width: 0.5, height: 0.4 },
+  }]);
+});
+
+test("flattenOcrLines ignores malformed nested OCR collections", () => {
+  assert.deepEqual(flattenOcrLines([{ paragraphs: {} }, null], 100, 100), []);
+});
+
 test("createTextExport keeps page boundaries", () => {
   const output = createTextExport({ pages: [
     { number: 1, text: "Первая" },

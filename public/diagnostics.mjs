@@ -1,7 +1,9 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.min.mjs";
 import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
+import { flattenOcrLines, normalizeWhitespace } from "./ocr-utils.mjs";
 
 const { createWorker } = Tesseract;
+const DIAGNOSTIC_DPI = 220;
 
 GlobalWorkerOptions.workerSrc = new URL(
   "./vendor/pdfjs/pdf.worker.min.mjs",
@@ -167,7 +169,7 @@ async function createDiagnosticWorker(report) {
     await worker.setParameters({
       preserve_interword_spaces: "1",
       tessedit_pageseg_mode: "3",
-      user_defined_dpi: "160",
+      user_defined_dpi: String(DIAGNOSTIC_DPI),
     });
     return worker;
   } finally {
@@ -189,6 +191,35 @@ function recognitionSummary(recognition) {
   };
 }
 
+function blockShape(blocks) {
+  if (!Array.isArray(blocks)) {
+    return { type: blocks == null ? "null" : typeof blocks, count: null, sample: [] };
+  }
+  const sample = [];
+  const sampleSize = Math.min(blocks.length, 20);
+  for (let blockIndex = 0; blockIndex < sampleSize; blockIndex += 1) {
+    const block = blocks[blockIndex];
+    const paragraphs = block?.paragraphs;
+    const paragraphSummary = {
+      type: paragraphs == null ? "null" : Array.isArray(paragraphs) ? "array" : typeof paragraphs,
+      count: Array.isArray(paragraphs) ? paragraphs.length : null,
+      lines: [],
+    };
+    if (Array.isArray(paragraphs)) {
+      const paragraphSampleSize = Math.min(paragraphs.length, 20);
+      for (let paragraphIndex = 0; paragraphIndex < paragraphSampleSize; paragraphIndex += 1) {
+        const lines = paragraphs[paragraphIndex]?.lines;
+        paragraphSummary.lines.push({
+          type: lines == null ? "null" : Array.isArray(lines) ? "array" : typeof lines,
+          count: Array.isArray(lines) ? lines.length : null,
+        });
+      }
+    }
+    sample.push(paragraphSummary);
+  }
+  return { type: "array", count: blocks.length, sample };
+}
+
 async function runDiagnostics(file) {
   if (running) return;
   setError("");
@@ -206,7 +237,7 @@ async function runDiagnostics(file) {
       size: file.size,
       lastModified: new Date(file.lastModified).toISOString(),
     },
-    settings: { page: 1, dpi: 160 },
+    settings: { page: 1, dpi: DIAGNOSTIC_DPI },
     steps: [],
     workerLog: [],
     workerErrors: [],
@@ -242,10 +273,10 @@ async function runDiagnostics(file) {
     if (!openResult.ok) throw openResult.error;
 
     let canvas;
-    setProgress(25, "Отрисовка страницы", "Первая страница, 160 DPI");
+    setProgress(25, "Отрисовка страницы", `Первая страница, ${DIAGNOSTIC_DPI} DPI`);
     const renderResult = await runStep(currentReport, "pdf.render-page-1", async () => {
       const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 160 / 72 });
+      const viewport = page.getViewport({ scale: DIAGNOSTIC_DPI / 72 });
       canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
@@ -277,17 +308,32 @@ async function runDiagnostics(file) {
     if (!workerResult.ok) throw workerResult.error;
 
     setProgress(60, "Точный повтор", "Canvas + autoRotate + blocks");
+    let exactRecognition;
     const exactResult = await runStep(currentReport, "tesseract.app-exact", async () => {
-      const recognition = await worker.recognize(
+      exactRecognition = await worker.recognize(
         canvas,
         { rotateAuto: true },
         { text: true, blocks: true },
         "diagnostics-app-exact",
       );
-      return recognitionSummary(recognition);
+      return recognitionSummary(exactRecognition);
     });
 
-    if (!exactResult.ok && dataUrlProbe.ok) {
+    let postprocessResult = null;
+    if (exactResult.ok) {
+      await runStep(currentReport, "tesseract.block-shape", async () => (
+        blockShape(exactRecognition.data.blocks)
+      ));
+      postprocessResult = await runStep(currentReport, "ocr.postprocess", async () => {
+        const text = normalizeWhitespace(exactRecognition.data.text);
+        const lines = flattenOcrLines(exactRecognition.data.blocks, canvas.width, canvas.height);
+        return { textLength: text.length, linesCount: lines.length };
+      });
+    }
+
+    if (exactResult.ok && !postprocessResult.ok) {
+      currentReport.conclusion = "ocr-postprocess-failure";
+    } else if (!exactResult.ok && dataUrlProbe.ok) {
       setProgress(75, "Проверка транспорта", "Data URL + autoRotate + blocks");
       const fullFallback = await runStep(currentReport, "tesseract.data-url-full", async () => {
         const recognition = await worker.recognize(
@@ -315,7 +361,7 @@ async function runDiagnostics(file) {
           ? "rotate-or-blocks-failure"
           : "tesseract-recognition-failure";
       }
-    } else if (exactResult.ok) {
+    } else if (exactResult.ok && postprocessResult.ok) {
       currentReport.conclusion = "no-failure-reproduced";
     } else if (!blobProbe.ok) {
       currentReport.conclusion = "canvas-to-blob-unavailable";
