@@ -1,0 +1,22 @@
+{
+  "name": "contractility",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Локальный инструмент распознавания договоров и подготовки дополнительных соглашений.",
+  "scripts": {
+    "doctor": "node scripts/doctor.mjs",
+    "vendor": "node scripts/vendor-assets.mjs",
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/rus": "1.0.0",
+    "pdfjs-dist": "6.1.200",
+    "tesseract.js": "7.0.0"
+  }
+}

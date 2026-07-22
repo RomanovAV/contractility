@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Contractility — распознавание договоров</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Contractility">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span>
+          <strong>Contractility</strong>
+          <small>локальная обработка договоров</small>
+        </span>
+      </a>
+      <div class="offline-badge"><span></span> Без отправки файлов в сеть</div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Шаг 1 · OCR</p>
+          <h1>Получим проверяемый текст из сканированного договора</h1>
+          <p class="intro-copy">PDF обрабатывается в этом браузере. Для каждой страницы сохраняются текст, уверенность распознавания и координаты строк.</p>
+        </div>
+        <div class="privacy-card">
+          <span class="privacy-icon" aria-hidden="true">⌁</span>
+          <div><strong>Локальный контур</strong><br><span>PDF.js, OCR-ядро и модели русского языка загружаются только с этого компьютера.</span></div>
+        </div>
+      </section>
+
+      <section class="setup-card" aria-labelledby="source-title">
+        <div class="section-heading">
+          <div><span class="step-number">01</span><div><h2 id="source-title">Исходный PDF</h2><p>Выберите один договор или дополнительное соглашение.</p></div></div>
+          <button id="reset-button" class="text-button" type="button" hidden>Выбрать другой</button>
+        </div>
+
+        <label id="drop-zone" class="drop-zone">
+          <input id="file-input" type="file" accept="application/pdf,.pdf">
+          <span class="upload-icon" aria-hidden="true">↑</span>
+          <strong>Перетащите PDF сюда</strong>
+          <span>или нажмите, чтобы выбрать файл</span>
+          <small>Документ не покинет компьютер</small>
+        </label>
+
+        <div id="file-summary" class="file-summary" hidden>
+          <div class="file-icon" aria-hidden="true">PDF</div>
+          <div class="file-description"><strong id="file-name"></strong><span id="file-meta"></span></div>
+          <span id="file-ready" class="ready-mark" aria-label="Файл готов">✓</span>
+        </div>
+
+        <div class="settings-grid">
+          <label>
+            <span>Качество распознавания</span>
+            <select id="dpi-select">
+              <option value="160">Быстро · 160 DPI</option>
+              <option value="220" selected>Оптимально · 220 DPI</option>
+              <option value="300">Точно · 300 DPI</option>
+            </select>
+          </label>
+          <label class="check-setting">
+            <input id="force-ocr" type="checkbox">
+            <span><strong>Всегда запускать OCR</strong><small>Даже если в PDF уже найден текстовый слой</small></span>
+          </label>
+          <label class="check-setting">
+            <input id="auto-rotate" type="checkbox" checked>
+            <span><strong>Исправлять поворот</strong><small>Пытаться определить ориентацию текста</small></span>
+          </label>
+        </div>
+
+        <div class="action-row">
+          <button id="start-button" class="primary-button" type="button" disabled>Начать распознавание</button>
+          <button id="cancel-button" class="secondary-button" type="button" hidden>Остановить после страницы</button>
+          <span id="preflight-note">Поддерживаются русские и английские фрагменты</span>
+        </div>
+      </section>
+
+      <section id="progress-card" class="progress-card" aria-live="polite" hidden>
+        <div class="progress-copy"><strong id="progress-title">Подготовка OCR</strong><span id="progress-detail">Загружаются локальные модели…</span></div>
+        <div class="progress-track"><span id="progress-bar"></span></div>
+        <strong id="progress-percent">0%</strong>
+      </section>
+
+      <section id="workspace" class="workspace" hidden>
+        <aside class="pages-panel">
+          <div class="panel-heading"><div><span class="step-number">02</span><h2>Страницы</h2></div><span id="pages-counter">0 / 0</span></div>
+          <div id="pages-list" class="pages-list"></div>
+        </aside>
+
+        <section class="viewer-panel">
+          <div class="panel-heading">
+            <div><h2>Оригинал</h2><span id="viewer-page-label">Страница 1</span></div>
+            <label class="overlay-toggle"><input id="overlay-toggle" type="checkbox" checked> Области OCR</label>
+          </div>
+          <div id="viewer-stage" class="viewer-stage">
+            <div id="page-surface" class="page-surface">
+              <canvas id="viewer-canvas"></canvas>
+              <div id="ocr-overlay" class="ocr-overlay" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div class="viewer-navigation">
+            <button id="previous-page" type="button" aria-label="Предыдущая страница">←</button>
+            <span id="viewer-position">1 / 1</span>
+            <button id="next-page" type="button" aria-label="Следующая страница">→</button>
+          </div>
+        </section>
+
+        <section class="text-panel">
+          <div class="panel-heading">
+            <div><span class="step-number">03</span><h2>Распознанный текст</h2></div>
+            <span id="confidence-badge" class="confidence-badge neutral">Ожидание</span>
+          </div>
+          <p id="text-hint" class="text-hint">После распознавания текст можно исправить вручную. Правки попадут в экспорт.</p>
+          <textarea id="page-text" spellcheck="true" placeholder="Текст выбранной страницы появится здесь" disabled></textarea>
+          <div id="edit-note" class="edit-note" hidden>Страница исправлена вручную</div>
+        </section>
+      </section>
+
+      <section id="export-card" class="export-card" hidden>
+        <div><p class="eyebrow">Результат</p><h2>OCR-слой готов к проверке и анализу</h2><p>JSON содержит SHA-256 исходного PDF, текст страниц, уверенность и нормализованные координаты строк.</p></div>
+        <div class="export-actions">
+          <button id="download-json" class="primary-button" type="button">Скачать OCR JSON</button>
+          <button id="download-text" class="secondary-button" type="button">Скачать текст</button>
+        </div>
+      </section>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+    </main>
+
+    <footer>Contractility MVP · PDF и распознанный текст обрабатываются локально</footer>
+    <script type="module" src="/app.mjs"></script>
+  </body>
+</html>
