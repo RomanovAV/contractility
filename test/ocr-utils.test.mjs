@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createTextExport,
+  createOcrRenderPlan,
   flattenOcrLines,
   isUsefulPdfText,
   normalizeWhitespace,
@@ -61,6 +62,26 @@ test("resolveAdditionalPageRotation honors explicit quarter turns", () => {
   assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "180"), 180);
   assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "270"), 270);
   assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "invalid"), 0);
+});
+
+test("createOcrRenderPlan preserves requested DPI for ordinary A4 pages", () => {
+  assert.deepEqual(createOcrRenderPlan({ width: 595, height: 842 }, 220), {
+    scale: 220 / 72,
+    width: 1819,
+    height: 2573,
+    requestedDpi: 220,
+    effectiveDpi: 220,
+    limited: false,
+  });
+});
+
+test("createOcrRenderPlan caps oversized iOS PDF pages", () => {
+  const plan = createOcrRenderPlan({ width: 2215.38, height: 3451.65 }, 220);
+  assert.equal(plan.limited, true);
+  assert.equal(plan.height, 4096);
+  assert.ok(plan.width < 4096);
+  assert.ok(plan.width * plan.height <= 12_000_000);
+  assert.ok(plan.effectiveDpi >= 80);
 });
 
 test("flattenOcrLines returns normalized evidence coordinates", () => {

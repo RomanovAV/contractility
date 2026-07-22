@@ -1,6 +1,7 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.min.mjs";
 import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
 import {
+  createOcrRenderPlan,
   createTextExport,
   flattenOcrLines,
   humanFileSize,
@@ -22,8 +23,9 @@ const elements = Object.fromEntries(
     "cancel-button", "confidence-badge", "download-json", "download-text",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-meta", "file-name", "file-summary", "force-ocr", "next-page", "ocr-overlay",
-    "overlay-toggle", "page-surface", "page-text", "pages-counter", "pages-list",
-    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail", "progress-percent", "rotation-select",
+    "overlay-toggle", "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
+    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail", "progress-percent", "reset-page-rotation",
+    "rotate-page-left", "rotate-page-right", "rotation-select",
     "progress-title", "reset-button", "start-button", "viewer-canvas", "viewer-page-label",
     "viewer-position", "viewer-stage", "workspace",
   ].map((id) => [id, document.getElementById(id)]),
@@ -42,6 +44,7 @@ const state = {
   startedAt: null,
   processingPage: null,
   processingDetail: "",
+  pageRotationOverrides: {},
 };
 
 const browserCapabilities = {
@@ -96,6 +99,11 @@ function setRunning(running) {
   elements["dpi-select"].disabled = running;
   elements["force-ocr"].disabled = running;
   elements["rotation-select"].disabled = running;
+  elements["rotate-page-left"].disabled = running || !state.pdf;
+  elements["rotate-page-right"].disabled = running || !state.pdf;
+  elements["reset-page-rotation"].disabled = running
+    || !state.pdf
+    || state.pageRotationOverrides[String(state.selectedPage)] == null;
   if (running) {
     elements["cancel-button"].disabled = false;
     elements["cancel-button"].textContent = "Остановить после страницы";
@@ -156,6 +164,7 @@ async function loadFile(file) {
     state.file = file;
     state.fileHash = hash;
     state.pdf = pdf;
+    state.pageRotationOverrides = {};
     elements["file-meta"].textContent = `${humanFileSize(file.size)} · ${pdf.numPages} стр. · SHA-256 ${hash.slice(0, 12)}…`;
     elements["start-button"].disabled = false;
     elements["workspace"].hidden = false;
@@ -178,6 +187,7 @@ function resetFile() {
   state.file = null;
   state.fileHash = null;
   state.pdf = null;
+  state.pageRotationOverrides = {};
   elements["file-input"].value = "";
   elements["file-summary"].hidden = true;
   elements["drop-zone"].hidden = false;
@@ -243,7 +253,7 @@ async function renderPreview(pageNumber) {
   const displayedViewport = page.getViewport({ scale: 1 });
   const additionalRotation = resolveAdditionalPageRotation(
     displayedViewport,
-    elements["rotation-select"].value,
+    rotationModeForPage(pageNumber),
   );
   const rotation = (page.rotate + additionalRotation) % 360;
   const baseViewport = page.getViewport({ scale: 1, rotation });
@@ -304,6 +314,45 @@ function updateTextPanel() {
   }
 }
 
+function rotationModeForPage(pageNumber, settings = null) {
+  const overrides = settings?.pageRotationOverrides ?? state.pageRotationOverrides;
+  return overrides[String(pageNumber)] ?? settings?.rotationMode ?? elements["rotation-select"].value;
+}
+
+function rotationLabel(mode) {
+  const labels = {
+    auto: "Авто",
+    0: "Без поворота",
+    90: "90° вправо",
+    180: "180°",
+    270: "90° влево",
+  };
+  return labels[String(mode)] ?? "Авто";
+}
+
+function updatePageRotationControls() {
+  const override = state.pageRotationOverrides[String(state.selectedPage)];
+  const mode = override ?? elements["rotation-select"].value;
+  elements["page-rotation-label"].textContent = override == null
+    ? `По умолчанию: ${rotationLabel(mode)}`
+    : rotationLabel(mode);
+  elements["rotate-page-left"].disabled = state.running || !state.pdf;
+  elements["rotate-page-right"].disabled = state.running || !state.pdf;
+  elements["reset-page-rotation"].disabled = state.running || !state.pdf || override == null;
+}
+
+async function rotateSelectedPage(delta) {
+  if (!state.pdf || state.running) return;
+  const page = await state.pdf.getPage(state.selectedPage);
+  const displayedViewport = page.getViewport({ scale: 1 });
+  const currentMode = rotationModeForPage(state.selectedPage);
+  const currentRotation = resolveAdditionalPageRotation(displayedViewport, currentMode);
+  const nextRotation = (currentRotation + delta + 360) % 360;
+  state.pageRotationOverrides[String(state.selectedPage)] = String(nextRotation);
+  updatePageRotationControls();
+  await renderPreview(state.selectedPage);
+}
+
 async function selectPage(pageNumber) {
   if (!state.pdf || pageNumber < 1 || pageNumber > state.pdf.numPages) return;
   state.selectedPage = pageNumber;
@@ -313,6 +362,7 @@ async function selectPage(pageNumber) {
   elements["next-page"].disabled = pageNumber === state.pdf.numPages;
   renderPageList();
   updateTextPanel();
+  updatePageRotationControls();
   await renderPreview(pageNumber);
 }
 
@@ -320,13 +370,15 @@ async function renderOcrCanvas(page, dpi, rotationMode) {
   const displayedViewport = page.getViewport({ scale: 1 });
   const additionalRotation = resolveAdditionalPageRotation(displayedViewport, rotationMode);
   const rotation = (page.rotate + additionalRotation) % 360;
-  const viewport = page.getViewport({ scale: dpi / 72, rotation });
+  const baseViewport = page.getViewport({ scale: 1, rotation });
+  const renderPlan = createOcrRenderPlan(baseViewport, dpi);
+  const viewport = page.getViewport({ scale: renderPlan.scale, rotation });
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
   const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
   await page.render({ canvasContext: context, viewport }).promise;
-  return { canvas, additionalRotation };
+  return { canvas, additionalRotation, renderPlan };
 }
 
 async function createOcrWorker(dpi) {
@@ -409,41 +461,54 @@ async function recognizePage(pageNumber, settings) {
     };
   }
 
-  const { canvas, additionalRotation } = await renderOcrCanvas(
+  const { canvas, additionalRotation, renderPlan } = await renderOcrCanvas(
     page,
     settings.dpi,
-    settings.rotationMode,
+    rotationModeForPage(pageNumber, settings),
   );
-  // Use the normal Canvas path when available. Data URL remains a compatibility
-  // fallback for browsers that do not provide the toBlob method Tesseract uses.
-  const useDataUrlTransport = !browserCapabilities.canvasToBlob;
-  const ocrInput = useDataUrlTransport ? canvas.toDataURL("image/png") : canvas;
-  const recognition = await state.worker.recognize(
-    ocrInput,
-    { rotateAuto: settings.autoRotate },
-    { text: true, blocks: true },
-    `page-${pageNumber}`,
-  );
-  const text = normalizeWhitespace(recognition.data.text);
-  const lines = flattenOcrLines(recognition.data.blocks, canvas.width, canvas.height);
-
-  const result = {
-    number: pageNumber,
-    source: "tesseract",
-    text,
-    confidence: Number.isFinite(recognition.data.confidence) ? recognition.data.confidence : 0,
-    lines,
-    durationMs: Math.round(performance.now() - startedAt),
-    pdfRotation: page.rotate,
-    additionalPageRotation: additionalRotation,
-    ocrRotationRadians: recognition.data.rotateRadians ?? 0,
-    renderedWidth: canvas.width,
-    renderedHeight: canvas.height,
-  };
-  if (pdfTextLayer.error) {
-    result.pdfTextLayerError = serializeError(pdfTextLayer.error);
+  try {
+    // Large scans can be rendered below the selected DPI to stay inside Safari's
+    // Canvas limits. Tell Tesseract the effective value used for this page.
+    await state.worker.setParameters({
+      user_defined_dpi: String(Math.round(renderPlan.effectiveDpi)),
+    });
+    // Use the normal Canvas path when available. Data URL remains a compatibility
+    // fallback for browsers that do not provide the toBlob method Tesseract uses.
+    const useDataUrlTransport = !browserCapabilities.canvasToBlob;
+    const ocrInput = useDataUrlTransport ? canvas.toDataURL("image/png") : canvas;
+    const recognition = await state.worker.recognize(
+      ocrInput,
+      { rotateAuto: rotationModeForPage(pageNumber, settings) === "auto" },
+      { text: true, blocks: true },
+      `page-${pageNumber}`,
+    );
+    const text = normalizeWhitespace(recognition.data.text);
+    const lines = flattenOcrLines(recognition.data.blocks, canvas.width, canvas.height);
+    const result = {
+      number: pageNumber,
+      source: "tesseract",
+      text,
+      confidence: Number.isFinite(recognition.data.confidence) ? recognition.data.confidence : 0,
+      lines,
+      durationMs: Math.round(performance.now() - startedAt),
+      pdfRotation: page.rotate,
+      additionalPageRotation: additionalRotation,
+      ocrRotationRadians: recognition.data.rotateRadians ?? 0,
+      renderedWidth: canvas.width,
+      renderedHeight: canvas.height,
+      requestedDpi: renderPlan.requestedDpi,
+      effectiveDpi: renderPlan.effectiveDpi,
+      renderLimited: renderPlan.limited,
+    };
+    if (pdfTextLayer.error) {
+      result.pdfTextLayerError = serializeError(pdfTextLayer.error);
+    }
+    return result;
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+    if (typeof page.cleanup === "function") page.cleanup();
   }
-  return result;
 }
 
 function readSettings() {
@@ -453,6 +518,7 @@ function readSettings() {
     forceOcr: elements["force-ocr"].checked,
     autoRotate: rotationMode === "auto",
     rotationMode,
+    pageRotationOverrides: { ...state.pageRotationOverrides },
     languages: ["rus", "eng"],
   };
 }
@@ -591,7 +657,15 @@ elements["previous-page"].addEventListener("click", () => selectPage(state.selec
 elements["next-page"].addEventListener("click", () => selectPage(state.selectedPage + 1));
 elements["overlay-toggle"].addEventListener("change", () => renderOverlay(state.results[state.selectedPage - 1]?.lines ?? []));
 elements["rotation-select"].addEventListener("change", () => {
+  updatePageRotationControls();
   if (state.pdf) renderPreview(state.selectedPage).catch(console.error);
+});
+elements["rotate-page-left"].addEventListener("click", () => rotateSelectedPage(-90).catch(console.error));
+elements["rotate-page-right"].addEventListener("click", () => rotateSelectedPage(90).catch(console.error));
+elements["reset-page-rotation"].addEventListener("click", () => {
+  delete state.pageRotationOverrides[String(state.selectedPage)];
+  updatePageRotationControls();
+  renderPreview(state.selectedPage).catch(console.error);
 });
 elements["page-text"].addEventListener("input", () => {
   const result = state.results[state.selectedPage - 1];

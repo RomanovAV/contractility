@@ -1,6 +1,7 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.min.mjs";
 import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
 import {
+  createOcrRenderPlan,
   flattenOcrLines,
   normalizeWhitespace,
   resolveAdditionalPageRotation,
@@ -254,6 +255,8 @@ async function runDiagnostics(file) {
 
   let pdf;
   let worker;
+  let page;
+  let canvas;
   try {
     setProgress(5, "Чтение файла", "Вычисляется SHA-256");
     const buffer = await file.arrayBuffer();
@@ -276,7 +279,6 @@ async function runDiagnostics(file) {
     });
     if (!openResult.ok) throw openResult.error;
 
-    let page;
     setProgress(20, "Проверка текстового слоя", "Safari вызывает PDF.js getTextContent");
     const pageResult = await runStep(currentReport, "pdf.get-page-1", async () => {
       page = await pdf.getPage(1);
@@ -293,14 +295,15 @@ async function runDiagnostics(file) {
       appendLog("PDF text layer недоступен; диагностика продолжает проверку OCR");
     }
 
-    let canvas;
     let additionalRotation;
     setProgress(25, "Отрисовка страницы", `Первая страница, ${DIAGNOSTIC_DPI} DPI`);
     const renderResult = await runStep(currentReport, "pdf.render-page-1", async () => {
       const displayedViewport = page.getViewport({ scale: 1 });
       additionalRotation = resolveAdditionalPageRotation(displayedViewport, "auto");
       const rotation = (page.rotate + additionalRotation) % 360;
-      const viewport = page.getViewport({ scale: DIAGNOSTIC_DPI / 72, rotation });
+      const baseViewport = page.getViewport({ scale: 1, rotation });
+      const renderPlan = createOcrRenderPlan(baseViewport, DIAGNOSTIC_DPI);
+      const viewport = page.getViewport({ scale: renderPlan.scale, rotation });
       canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
@@ -314,6 +317,9 @@ async function runDiagnostics(file) {
         displayedWidth: displayedViewport.width,
         displayedHeight: displayedViewport.height,
         additionalRotation,
+        requestedDpi: renderPlan.requestedDpi,
+        effectiveDpi: renderPlan.effectiveDpi,
+        renderLimited: renderPlan.limited,
       };
     });
     if (!renderResult.ok) throw renderResult.error;
@@ -419,6 +425,11 @@ async function runDiagnostics(file) {
         return { terminated: true };
       });
     }
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    if (typeof page?.cleanup === "function") page.cleanup();
     if (typeof pdf?.destroy === "function") {
       await Promise.resolve(pdf.destroy()).catch(() => {});
     }

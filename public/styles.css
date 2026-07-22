@@ -124,6 +124,8 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .viewer-navigation button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); cursor: pointer; }
 .viewer-navigation button:disabled { opacity: 0.35; cursor: not-allowed; }
 .viewer-navigation span { min-width: 70px; color: var(--muted); text-align: center; font-size: 11px; font-weight: 700; }
+.viewer-navigation .viewer-navigation-divider { min-width: 1px; width: 1px; height: 24px; background: var(--line); }
+.viewer-navigation .rotation-reset-button { width: auto; padding: 0 10px; font-size: 10px; }
 
 .text-panel { display: grid; grid-template-rows: auto auto 1fr auto; background: white; }
 .confidence-badge { padding: 6px 8px; border-radius: 999px; font-size: 9px !important; font-weight: 800; }

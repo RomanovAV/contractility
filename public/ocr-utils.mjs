@@ -89,6 +89,32 @@ export function resolveAdditionalPageRotation(viewport, rotationMode = "auto") {
   return requested;
 }
 
+export function createOcrRenderPlan(
+  viewport,
+  requestedDpi,
+  { maxDimension = 4096, maxPixels = 12_000_000 } = {},
+) {
+  const width = Number(viewport?.width);
+  const height = Number(viewport?.height);
+  const dpi = Number(requestedDpi);
+  if (!(width > 0) || !(height > 0) || !(dpi > 0)) {
+    throw new TypeError("Invalid OCR viewport or DPI");
+  }
+
+  const requestedScale = dpi / 72;
+  const dimensionScale = maxDimension / Math.max(width, height);
+  const pixelScale = Math.sqrt(maxPixels / (width * height));
+  const scale = Math.min(requestedScale, dimensionScale, pixelScale);
+  return {
+    scale,
+    width: Math.ceil(width * scale),
+    height: Math.ceil(height * scale),
+    requestedDpi: dpi,
+    effectiveDpi: Math.round(scale * 72 * 10) / 10,
+    limited: scale < requestedScale,
+  };
+}
+
 export function createTextExport(documentResult) {
   const sections = documentResult.pages.map((page) => [
     `===== Страница ${page.number} =====`,
