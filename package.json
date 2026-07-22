@@ -6,6 +6,7 @@
   "description": "Локальный инструмент распознавания договоров и подготовки дополнительных соглашений.",
   "scripts": {
     "doctor": "node scripts/doctor.mjs",
+    "diagnostics": "node src/server.mjs",
     "vendor": "node scripts/vendor-assets.mjs",
     "start": "node src/server.mjs",
     "test": "node --test"

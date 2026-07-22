@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Contractility — диагностика OCR</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Contractility">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span><strong>Contractility</strong><small>диагностика OCR в Safari</small></span>
+      </a>
+      <div class="offline-badge"><span></span> Файл остаётся в браузере</div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Диагностический прогон</p>
+          <h1>Локализуем ошибку OCR в Safari</h1>
+          <p class="intro-copy">Будет обработана только первая страница. Отчёт содержит версию Safari, этапы и стеки ошибок, но не содержит текст или изображение документа.</p>
+        </div>
+      </section>
+
+      <section class="setup-card" aria-labelledby="diagnostics-title">
+        <div class="section-heading">
+          <div><span class="step-number">01</span><div><h2 id="diagnostics-title">Проблемный PDF</h2><p>Выберите тот же файл, на котором основной экран возвращает ошибку.</p></div></div>
+        </div>
+        <label id="diagnostics-drop-zone" class="drop-zone">
+          <input id="diagnostics-file" type="file" accept="application/pdf,.pdf">
+          <span class="upload-icon" aria-hidden="true">↑</span>
+          <strong>Выберите проблемный PDF</strong>
+          <span>Диагностика начнётся автоматически</span>
+          <small>В отчёт попадут только имя, размер и SHA-256 файла</small>
+        </label>
+        <div id="diagnostics-file-summary" class="file-summary" hidden>
+          <div class="file-icon" aria-hidden="true">PDF</div>
+          <div class="file-description"><strong id="diagnostics-file-name"></strong><span id="diagnostics-file-meta"></span></div>
+        </div>
+        <div class="action-row">
+          <button id="diagnostics-download" class="primary-button" type="button" disabled>Скачать отчёт JSON</button>
+          <button id="diagnostics-retry" class="secondary-button" type="button" disabled>Повторить</button>
+          <span id="diagnostics-status">Ожидается файл</span>
+        </div>
+      </section>
+
+      <section id="diagnostics-progress" class="progress-card" aria-live="polite" hidden>
+        <div class="progress-copy"><strong id="diagnostics-progress-title">Диагностика</strong><span id="diagnostics-progress-detail">Подготовка…</span></div>
+        <div class="progress-track"><span id="diagnostics-progress-bar"></span></div>
+        <strong id="diagnostics-progress-percent">0%</strong>
+      </section>
+
+      <section class="setup-card diagnostics-log-card" aria-labelledby="diagnostics-log-title">
+        <div class="section-heading">
+          <div><span class="step-number">02</span><div><h2 id="diagnostics-log-title">Ход проверки</h2><p>Не закрывайте вкладку до сообщения «Диагностика завершена».</p></div></div>
+        </div>
+        <pre id="diagnostics-log" class="diagnostics-log">Ожидается файл…</pre>
+      </section>
+      <div id="diagnostics-error" class="error-banner" role="alert" hidden></div>
+    </main>
+
+    <footer>Contractility · диагностический отчёт не содержит распознанный текст</footer>
+    <script type="module" src="/diagnostics.mjs"></script>
+  </body>
+</html>

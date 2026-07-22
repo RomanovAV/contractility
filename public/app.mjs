@@ -44,9 +44,17 @@ const browserCapabilities = {
   webAssembly: typeof WebAssembly === "object",
   webWorker: typeof Worker === "function",
   sha256: Boolean(globalThis.crypto?.subtle),
+  canvasToBlob: typeof HTMLCanvasElement.prototype.toBlob === "function",
+  canvasToDataUrl: typeof HTMLCanvasElement.prototype.toDataURL === "function",
+};
+const browserEnvironment = {
+  userAgent: navigator.userAgent,
+  platform: navigator.platform,
+  vendor: navigator.vendor,
+  isSafari: /Apple/i.test(navigator.vendor) && /Safari/i.test(navigator.userAgent),
 };
 const missingBrowserCapabilities = Object.entries(browserCapabilities)
-  .filter(([, available]) => !available)
+  .filter(([name, available]) => !available && name !== "canvasToBlob")
   .map(([name]) => name);
 
 if (missingBrowserCapabilities.length > 0) {
@@ -368,8 +376,13 @@ async function recognizePage(pageNumber, settings) {
   }
 
   const canvas = await renderOcrCanvas(page, settings.dpi);
+  // Tesseract.js converts HTMLCanvasElement via canvas.toBlob(). Some Safari/WebKit
+  // builds expose an incomplete implementation and fail before the image reaches
+  // the OCR worker. A PNG data URL follows a separate, broadly supported path.
+  const useDataUrlTransport = browserEnvironment.isSafari || !browserCapabilities.canvasToBlob;
+  const ocrInput = useDataUrlTransport ? canvas.toDataURL("image/png") : canvas;
   const recognition = await state.worker.recognize(
-    canvas,
+    ocrInput,
     { rotateAuto: settings.autoRotate },
     { text: true, blocks: true },
     `page-${pageNumber}`,
@@ -438,6 +451,10 @@ async function runOcr() {
           confidence: 0,
           lines: [],
           error: error.message ?? String(error),
+          errorDetails: {
+            name: error.name ?? error.constructor?.name ?? "Error",
+            stack: error.stack ?? null,
+          },
         };
       }
 
@@ -490,6 +507,7 @@ function buildDocumentResult() {
       ocr: "tesseract.js@7.0.0",
       models: ["rus@4.0.0_best_int", "eng@4.0.0_best_int"],
       browserCapabilities,
+      browserEnvironment,
     },
     settings,
     complete: state.results.filter(Boolean).length === state.pdf.numPages,
