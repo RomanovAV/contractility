@@ -6,6 +6,7 @@ import {
   isUsefulPdfText,
   normalizeWhitespace,
   readPdfTextLayer,
+  resolveAdditionalPageRotation,
 } from "../public/ocr-utils.mjs";
 
 test("normalizeWhitespace preserves paragraphs and removes noise", () => {
@@ -48,6 +49,18 @@ test("readPdfTextLayer converts PDF.js failure into an OCR fallback", async () =
   assert.equal(result.skipped, false);
   assert.equal(result.text, "");
   assert.equal(result.error, failure);
+});
+
+test("resolveAdditionalPageRotation normalizes landscape pages in auto mode", () => {
+  assert.equal(resolveAdditionalPageRotation({ width: 1400, height: 900 }, "auto"), 90);
+  assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "auto"), 0);
+});
+
+test("resolveAdditionalPageRotation honors explicit quarter turns", () => {
+  assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "90"), 90);
+  assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "180"), 180);
+  assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "270"), 270);
+  assert.equal(resolveAdditionalPageRotation({ width: 900, height: 1400 }, "invalid"), 0);
 });
 
 test("flattenOcrLines returns normalized evidence coordinates", () => {

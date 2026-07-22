@@ -78,6 +78,17 @@ export async function readPdfTextLayer(page, { skip = false } = {}) {
   }
 }
 
+export function resolveAdditionalPageRotation(viewport, rotationMode = "auto") {
+  if (rotationMode === "auto") {
+    return viewport?.width > viewport?.height ? 90 : 0;
+  }
+  const requested = Number.parseInt(rotationMode, 10);
+  if (![0, 90, 180, 270].includes(requested)) {
+    return 0;
+  }
+  return requested;
+}
+
 export function createTextExport(documentResult) {
   const sections = documentResult.pages.map((page) => [
     `===== Страница ${page.number} =====`,

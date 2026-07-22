@@ -1,6 +1,10 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.min.mjs";
 import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
-import { flattenOcrLines, normalizeWhitespace } from "./ocr-utils.mjs";
+import {
+  flattenOcrLines,
+  normalizeWhitespace,
+  resolveAdditionalPageRotation,
+} from "./ocr-utils.mjs";
 
 const { createWorker } = Tesseract;
 const DIAGNOSTIC_DPI = 220;
@@ -284,26 +288,33 @@ async function runDiagnostics(file) {
       const textContent = await page.getTextContent();
       return { itemsCount: Array.isArray(textContent?.items) ? textContent.items.length : null };
     });
+    const textLayerFailed = !textLayerResult.ok;
     if (!textLayerResult.ok) {
-      currentReport.conclusion = "pdf-text-layer-failure";
-      currentReport.complete = true;
-      setProgress(100, "Причина найдена", "PDF.js getTextContent несовместим с Safari; приложение перейдёт к OCR");
-      elements["diagnostics-status"].textContent = "Готово — скачайте отчёт JSON";
-      appendLog("Причина найдена: PDF text layer недоступен; требуется fallback на OCR");
-      return;
+      appendLog("PDF text layer недоступен; диагностика продолжает проверку OCR");
     }
 
     let canvas;
+    let additionalRotation;
     setProgress(25, "Отрисовка страницы", `Первая страница, ${DIAGNOSTIC_DPI} DPI`);
     const renderResult = await runStep(currentReport, "pdf.render-page-1", async () => {
-      const viewport = page.getViewport({ scale: DIAGNOSTIC_DPI / 72 });
+      const displayedViewport = page.getViewport({ scale: 1 });
+      additionalRotation = resolveAdditionalPageRotation(displayedViewport, "auto");
+      const rotation = (page.rotate + additionalRotation) % 360;
+      const viewport = page.getViewport({ scale: DIAGNOSTIC_DPI / 72, rotation });
       canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
       const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
       if (!context) throw new Error("Canvas 2D context is unavailable");
       await page.render({ canvasContext: context, viewport }).promise;
-      return { width: canvas.width, height: canvas.height, pdfRotation: page.rotate };
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        pdfRotation: page.rotate,
+        displayedWidth: displayedViewport.width,
+        displayedHeight: displayedViewport.height,
+        additionalRotation,
+      };
     });
     if (!renderResult.ok) throw renderResult.error;
 
@@ -382,7 +393,9 @@ async function runDiagnostics(file) {
           : "tesseract-recognition-failure";
       }
     } else if (exactResult.ok && postprocessResult.ok) {
-      currentReport.conclusion = "no-failure-reproduced";
+      currentReport.conclusion = textLayerFailed
+        ? "pdf-text-layer-failure-ocr-succeeded"
+        : "no-failure-reproduced";
     } else if (!blobProbe.ok) {
       currentReport.conclusion = "canvas-to-blob-unavailable";
     } else {
@@ -407,7 +420,7 @@ async function runDiagnostics(file) {
       });
     }
     if (typeof pdf?.destroy === "function") {
-      await pdf.destroy().catch(() => {});
+      await Promise.resolve(pdf.destroy()).catch(() => {});
     }
     currentReport.finishedAt = new Date().toISOString();
     setRunning(false);

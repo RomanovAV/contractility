@@ -65,9 +65,15 @@
             <input id="force-ocr" type="checkbox">
             <span><strong>Всегда запускать OCR</strong><small>Даже если в PDF уже найден текстовый слой</small></span>
           </label>
-          <label class="check-setting">
-            <input id="auto-rotate" type="checkbox" checked>
-            <span><strong>Исправлять поворот</strong><small>Пытаться определить ориентацию текста</small></span>
+          <label>
+            <span>Поворот страниц</span>
+            <select id="rotation-select">
+              <option value="auto" selected>Авто · книжная ориентация</option>
+              <option value="0">Не поворачивать</option>
+              <option value="90">90° вправо</option>
+              <option value="270">90° влево</option>
+              <option value="180">180°</option>
+            </select>
           </label>
         </div>
 

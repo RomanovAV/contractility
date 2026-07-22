@@ -7,6 +7,7 @@ import {
   isUsefulPdfText,
   normalizeWhitespace,
   readPdfTextLayer,
+  resolveAdditionalPageRotation,
 } from "./ocr-utils.mjs";
 
 const { createWorker } = Tesseract;
@@ -18,11 +19,11 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "auto-rotate", "cancel-button", "confidence-badge", "download-json", "download-text",
+    "cancel-button", "confidence-badge", "download-json", "download-text",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-meta", "file-name", "file-summary", "force-ocr", "next-page", "ocr-overlay",
     "overlay-toggle", "page-surface", "page-text", "pages-counter", "pages-list",
-    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail", "progress-percent",
+    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail", "progress-percent", "rotation-select",
     "progress-title", "reset-button", "start-button", "viewer-canvas", "viewer-page-label",
     "viewer-position", "viewer-stage", "workspace",
   ].map((id) => [id, document.getElementById(id)]),
@@ -39,6 +40,8 @@ const state = {
   selectedPage: 1,
   previewRequest: 0,
   startedAt: null,
+  processingPage: null,
+  processingDetail: "",
 };
 
 const browserCapabilities = {
@@ -92,7 +95,7 @@ function setRunning(running) {
   elements["file-input"].disabled = running;
   elements["dpi-select"].disabled = running;
   elements["force-ocr"].disabled = running;
-  elements["auto-rotate"].disabled = running;
+  elements["rotation-select"].disabled = running;
   if (running) {
     elements["cancel-button"].disabled = false;
     elements["cancel-button"].textContent = "Остановить после страницы";
@@ -115,6 +118,8 @@ async function sha256(arrayBuffer) {
 
 function clearResults() {
   state.results = [];
+  state.processingPage = null;
+  state.processingDetail = "";
   state.selectedPage = 1;
   elements["pages-list"].replaceChildren();
   elements["page-text"].value = "";
@@ -167,7 +172,9 @@ async function loadFile(file) {
 
 function resetFile() {
   if (state.running) return;
-  state.pdf?.destroy();
+  if (typeof state.pdf?.destroy === "function") {
+    Promise.resolve(state.pdf.destroy()).catch(console.error);
+  }
   state.file = null;
   state.fileHash = null;
   state.pdf = null;
@@ -189,7 +196,7 @@ function initializePageList(pageCount) {
     button.dataset.page = String(number);
     button.innerHTML = `
       <span class="page-number">${number}</span>
-      <span class="page-state"><strong>Ожидание</strong><span>Страница не обработана</span></span>
+      <span class="page-state"><strong>Готова</strong><span>Нажмите «Начать распознавание»</span></span>
     `;
     button.addEventListener("click", () => selectPage(number));
     elements["pages-list"].append(button);
@@ -197,8 +204,12 @@ function initializePageList(pageCount) {
   elements["pages-counter"].textContent = `0 / ${pageCount}`;
 }
 
-function pageState(result) {
-  if (!result) return { title: "Ожидание", detail: "Страница не обработана", tone: "" };
+function pageState(result, pageNumber = null) {
+  if (!result && state.running && pageNumber === state.processingPage) {
+    return { title: "Обработка", detail: state.processingDetail || "Подготавливается страница", tone: "warning" };
+  }
+  if (!result && state.running) return { title: "В очереди", detail: "Ожидает обработки", tone: "" };
+  if (!result) return { title: "Готова", detail: "Нажмите «Начать распознавание»", tone: "" };
   if (result.error) return { title: "Ошибка", detail: result.error, tone: "failed" };
   if (result.source === "pdf-text") return { title: "Текст PDF", detail: "OCR не потребовался", tone: "good" };
   if (!normalizeWhitespace(result.text)) return { title: "Пустая", detail: "Текст не найден", tone: "warning" };
@@ -213,7 +224,7 @@ function renderPageList() {
   for (const button of elements["pages-list"].querySelectorAll(".page-item")) {
     const pageNumber = Number(button.dataset.page);
     const pageResult = state.results[pageNumber - 1];
-    const view = pageState(pageResult);
+    const view = pageState(pageResult, pageNumber);
     button.classList.toggle("selected", pageNumber === state.selectedPage);
     const stateElement = button.querySelector(".page-state");
     const title = document.createElement("strong");
@@ -229,11 +240,17 @@ async function renderPreview(pageNumber) {
   if (!state.pdf) return;
   const requestId = ++state.previewRequest;
   const page = await state.pdf.getPage(pageNumber);
-  const baseViewport = page.getViewport({ scale: 1 });
+  const displayedViewport = page.getViewport({ scale: 1 });
+  const additionalRotation = resolveAdditionalPageRotation(
+    displayedViewport,
+    elements["rotation-select"].value,
+  );
+  const rotation = (page.rotate + additionalRotation) % 360;
+  const baseViewport = page.getViewport({ scale: 1, rotation });
   const availableWidth = Math.max(280, elements["viewer-stage"].clientWidth - 44);
   const cssScale = Math.min(1.6, availableWidth / baseViewport.width);
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const viewport = page.getViewport({ scale: cssScale * pixelRatio });
+  const viewport = page.getViewport({ scale: cssScale * pixelRatio, rotation });
   const canvas = elements["viewer-canvas"];
   const context = canvas.getContext("2d", { alpha: false });
 
@@ -299,14 +316,17 @@ async function selectPage(pageNumber) {
   await renderPreview(pageNumber);
 }
 
-async function renderOcrCanvas(page, dpi) {
-  const viewport = page.getViewport({ scale: dpi / 72 });
+async function renderOcrCanvas(page, dpi, rotationMode) {
+  const displayedViewport = page.getViewport({ scale: 1 });
+  const additionalRotation = resolveAdditionalPageRotation(displayedViewport, rotationMode);
+  const rotation = (page.rotate + additionalRotation) % 360;
+  const viewport = page.getViewport({ scale: dpi / 72, rotation });
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
   const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
   await page.render({ canvasContext: context, viewport }).promise;
-  return canvas;
+  return { canvas, additionalRotation };
 }
 
 async function createOcrWorker(dpi) {
@@ -331,6 +351,12 @@ async function createOcrWorker(dpi) {
       const currentProgress = message.status === "recognizing text" ? message.progress : 0;
       const percent = ((completedPages + currentProgress) / totalPages) * 100;
       updateProgress({ percent, title: "Подготовка и распознавание", detail });
+      if (state.processingPage) {
+        state.processingDetail = message.status === "recognizing text"
+          ? `Распознавание ${Math.round((message.progress ?? 0) * 100)}%`
+          : detail;
+        renderPageList();
+      }
     },
     errorHandler(error) {
       console.error("Tesseract worker:", error);
@@ -383,7 +409,11 @@ async function recognizePage(pageNumber, settings) {
     };
   }
 
-  const canvas = await renderOcrCanvas(page, settings.dpi);
+  const { canvas, additionalRotation } = await renderOcrCanvas(
+    page,
+    settings.dpi,
+    settings.rotationMode,
+  );
   // Use the normal Canvas path when available. Data URL remains a compatibility
   // fallback for browsers that do not provide the toBlob method Tesseract uses.
   const useDataUrlTransport = !browserCapabilities.canvasToBlob;
@@ -405,6 +435,7 @@ async function recognizePage(pageNumber, settings) {
     lines,
     durationMs: Math.round(performance.now() - startedAt),
     pdfRotation: page.rotate,
+    additionalPageRotation: additionalRotation,
     ocrRotationRadians: recognition.data.rotateRadians ?? 0,
     renderedWidth: canvas.width,
     renderedHeight: canvas.height,
@@ -413,6 +444,17 @@ async function recognizePage(pageNumber, settings) {
     result.pdfTextLayerError = serializeError(pdfTextLayer.error);
   }
   return result;
+}
+
+function readSettings() {
+  const rotationMode = elements["rotation-select"].value;
+  return {
+    dpi: Number(elements["dpi-select"].value),
+    forceOcr: elements["force-ocr"].checked,
+    autoRotate: rotationMode === "auto",
+    rotationMode,
+    languages: ["rus", "eng"],
+  };
 }
 
 async function runOcr() {
@@ -431,13 +473,10 @@ async function runOcr() {
   state.cancelRequested = false;
   state.startedAt = new Date().toISOString();
   setRunning(true);
+  state.processingDetail = "Подготовка OCR";
+  renderPageList();
 
-  const settings = {
-    dpi: Number(elements["dpi-select"].value),
-    forceOcr: elements["force-ocr"].checked,
-    autoRotate: elements["auto-rotate"].checked,
-    languages: ["rus", "eng"],
-  };
+  const settings = readSettings();
 
   try {
     updateProgress({ percent: 0, title: "Подготовка OCR", detail: "Читаются локальные компоненты…" });
@@ -445,6 +484,9 @@ async function runOcr() {
 
     for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber += 1) {
       if (state.cancelRequested) break;
+      state.processingPage = pageNumber;
+      state.processingDetail = "Подготавливается изображение страницы";
+      renderPageList();
       updateProgress({
         percent: ((pageNumber - 1) / state.pdf.numPages) * 100,
         title: `Страница ${pageNumber} из ${state.pdf.numPages}`,
@@ -466,12 +508,14 @@ async function runOcr() {
         };
       }
 
+      state.processingPage = null;
+      state.processingDetail = "";
       renderPageList();
       await selectPage(pageNumber);
       updateProgress({
         percent: (pageNumber / state.pdf.numPages) * 100,
         title: `Обработано страниц: ${pageNumber}`,
-        detail: pageState(state.results[pageNumber - 1]).detail,
+        detail: pageState(state.results[pageNumber - 1], pageNumber).detail,
       });
     }
 
@@ -488,17 +532,15 @@ async function runOcr() {
   } finally {
     await state.worker?.terminate().catch(console.error);
     state.worker = null;
+    state.processingPage = null;
+    state.processingDetail = "";
     setRunning(false);
+    renderPageList();
   }
 }
 
 function buildDocumentResult() {
-  const settings = {
-    dpi: Number(elements["dpi-select"].value),
-    forceOcr: elements["force-ocr"].checked,
-    autoRotate: elements["auto-rotate"].checked,
-    languages: ["rus", "eng"],
-  };
+  const settings = readSettings();
   return {
     schemaVersion: "contractility.ocr.v1",
     createdAt: new Date().toISOString(),
@@ -548,6 +590,9 @@ elements["cancel-button"].addEventListener("click", () => {
 elements["previous-page"].addEventListener("click", () => selectPage(state.selectedPage - 1));
 elements["next-page"].addEventListener("click", () => selectPage(state.selectedPage + 1));
 elements["overlay-toggle"].addEventListener("change", () => renderOverlay(state.results[state.selectedPage - 1]?.lines ?? []));
+elements["rotation-select"].addEventListener("change", () => {
+  if (state.pdf) renderPreview(state.selectedPage).catch(console.error);
+});
 elements["page-text"].addEventListener("input", () => {
   const result = state.results[state.selectedPage - 1];
   if (!result) return;
