@@ -272,10 +272,30 @@ async function runDiagnostics(file) {
     });
     if (!openResult.ok) throw openResult.error;
 
+    let page;
+    setProgress(20, "Проверка текстового слоя", "Safari вызывает PDF.js getTextContent");
+    const pageResult = await runStep(currentReport, "pdf.get-page-1", async () => {
+      page = await pdf.getPage(1);
+      return { pageNumber: page.pageNumber, pdfRotation: page.rotate };
+    });
+    if (!pageResult.ok) throw pageResult.error;
+
+    const textLayerResult = await runStep(currentReport, "pdf.get-text-content", async () => {
+      const textContent = await page.getTextContent();
+      return { itemsCount: Array.isArray(textContent?.items) ? textContent.items.length : null };
+    });
+    if (!textLayerResult.ok) {
+      currentReport.conclusion = "pdf-text-layer-failure";
+      currentReport.complete = true;
+      setProgress(100, "Причина найдена", "PDF.js getTextContent несовместим с Safari; приложение перейдёт к OCR");
+      elements["diagnostics-status"].textContent = "Готово — скачайте отчёт JSON";
+      appendLog("Причина найдена: PDF text layer недоступен; требуется fallback на OCR");
+      return;
+    }
+
     let canvas;
     setProgress(25, "Отрисовка страницы", `Первая страница, ${DIAGNOSTIC_DPI} DPI`);
     const renderResult = await runStep(currentReport, "pdf.render-page-1", async () => {
-      const page = await pdf.getPage(1);
       const viewport = page.getViewport({ scale: DIAGNOSTIC_DPI / 72 });
       canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);

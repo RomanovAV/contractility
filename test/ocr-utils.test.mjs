@@ -5,6 +5,7 @@ import {
   flattenOcrLines,
   isUsefulPdfText,
   normalizeWhitespace,
+  readPdfTextLayer,
 } from "../public/ocr-utils.mjs";
 
 test("normalizeWhitespace preserves paragraphs and removes noise", () => {
@@ -14,6 +15,39 @@ test("normalizeWhitespace preserves paragraphs and removes noise", () => {
 test("isUsefulPdfText rejects short scan artifacts", () => {
   assert.equal(isUsefulPdfText("стр. 1"), false);
   assert.equal(isUsefulPdfText("Договор ".repeat(12)), true);
+});
+
+test("readPdfTextLayer returns normalized PDF text", async () => {
+  const result = await readPdfTextLayer({
+    async getTextContent() {
+      return { items: [{ str: " Первый " }, { str: "пункт" }] };
+    },
+  });
+  assert.deepEqual(result, { skipped: false, text: "Первый пункт", error: null });
+});
+
+test("readPdfTextLayer skips PDF.js when OCR is forced", async () => {
+  let called = false;
+  const result = await readPdfTextLayer({
+    async getTextContent() {
+      called = true;
+      throw new Error("must not be called");
+    },
+  }, { skip: true });
+  assert.equal(called, false);
+  assert.deepEqual(result, { skipped: true, text: "", error: null });
+});
+
+test("readPdfTextLayer converts PDF.js failure into an OCR fallback", async () => {
+  const failure = new TypeError("Safari getTextContent failure");
+  const result = await readPdfTextLayer({
+    async getTextContent() {
+      throw failure;
+    },
+  });
+  assert.equal(result.skipped, false);
+  assert.equal(result.text, "");
+  assert.equal(result.error, failure);
 });
 
 test("flattenOcrLines returns normalized evidence coordinates", () => {

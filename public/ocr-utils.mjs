@@ -56,6 +56,28 @@ export function isUsefulPdfText(text) {
   return meaningfulCharacters.length >= 80;
 }
 
+export async function readPdfTextLayer(page, { skip = false } = {}) {
+  if (skip) {
+    return { skipped: true, text: "", error: null };
+  }
+
+  try {
+    const textContent = await page.getTextContent();
+    const items = Array.isArray(textContent?.items) ? textContent.items : [];
+    const parts = [];
+    for (let index = 0; index < items.length; index += 1) {
+      parts.push(items[index]?.str ?? "");
+    }
+    return {
+      skipped: false,
+      text: normalizeWhitespace(parts.join(" ")),
+      error: null,
+    };
+  } catch (error) {
+    return { skipped: false, text: "", error };
+  }
+}
+
 export function createTextExport(documentResult) {
   const sections = documentResult.pages.map((page) => [
     `===== Страница ${page.number} =====`,

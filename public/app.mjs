@@ -6,6 +6,7 @@ import {
   humanFileSize,
   isUsefulPdfText,
   normalizeWhitespace,
+  readPdfTextLayer,
 } from "./ocr-utils.mjs";
 
 const { createWorker } = Tesseract;
@@ -73,6 +74,14 @@ const statusLabels = {
 function setError(message) {
   elements["error-banner"].textContent = message;
   elements["error-banner"].hidden = !message;
+}
+
+function serializeError(error) {
+  return {
+    name: error?.name ?? error?.constructor?.name ?? "Error",
+    message: error?.message ?? String(error),
+    stack: error?.stack ?? null,
+  };
 }
 
 function setRunning(running) {
@@ -300,11 +309,6 @@ async function renderOcrCanvas(page, dpi) {
   return canvas;
 }
 
-async function extractPdfText(page) {
-  const textContent = await page.getTextContent();
-  return normalizeWhitespace(textContent.items.map((item) => item.str ?? "").join(" "));
-}
-
 async function createOcrWorker(dpi) {
   let initializationTimedOut = false;
   let timeoutId;
@@ -361,13 +365,17 @@ async function createOcrWorker(dpi) {
 async function recognizePage(pageNumber, settings) {
   const startedAt = performance.now();
   const page = await state.pdf.getPage(pageNumber);
-  const pdfText = await extractPdfText(page);
+  const pdfTextLayer = await readPdfTextLayer(page, { skip: settings.forceOcr });
 
-  if (!settings.forceOcr && isUsefulPdfText(pdfText)) {
+  if (pdfTextLayer.error) {
+    console.warn("PDF text layer is unavailable; falling back to OCR:", pdfTextLayer.error);
+  }
+
+  if (!pdfTextLayer.skipped && !pdfTextLayer.error && isUsefulPdfText(pdfTextLayer.text)) {
     return {
       number: pageNumber,
       source: "pdf-text",
-      text: pdfText,
+      text: pdfTextLayer.text,
       confidence: 100,
       lines: [],
       durationMs: Math.round(performance.now() - startedAt),
@@ -389,7 +397,7 @@ async function recognizePage(pageNumber, settings) {
   const text = normalizeWhitespace(recognition.data.text);
   const lines = flattenOcrLines(recognition.data.blocks, canvas.width, canvas.height);
 
-  return {
+  const result = {
     number: pageNumber,
     source: "tesseract",
     text,
@@ -401,6 +409,10 @@ async function recognizePage(pageNumber, settings) {
     renderedWidth: canvas.width,
     renderedHeight: canvas.height,
   };
+  if (pdfTextLayer.error) {
+    result.pdfTextLayerError = serializeError(pdfTextLayer.error);
+  }
+  return result;
 }
 
 async function runOcr() {
@@ -450,10 +462,7 @@ async function runOcr() {
           confidence: 0,
           lines: [],
           error: error.message ?? String(error),
-          errorDetails: {
-            name: error.name ?? error.constructor?.name ?? "Error",
-            stack: error.stack ?? null,
-          },
+          errorDetails: serializeError(error),
         };
       }
 
