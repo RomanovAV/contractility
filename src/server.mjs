@@ -42,6 +42,18 @@ const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
 };
 
+// The Emscripten wrapper used by Tesseract.js needs unsafe-eval while it
+// instantiates the local OCR core in some WebKit builds. Keep that permission
+// isolated to the OCR Web Worker; the application page retains the stricter
+// wasm-unsafe-eval-only policy above.
+const TESSERACT_WORKER_SECURITY_HEADERS = {
+  ...SECURITY_HEADERS,
+  "Content-Security-Policy": SECURITY_HEADERS["Content-Security-Policy"].replace(
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'",
+  ),
+};
+
 function sendJson(response, statusCode, value) {
   response.writeHead(statusCode, {
     ...SECURITY_HEADERS,
@@ -82,8 +94,14 @@ async function serveStatic(request, response, pathname) {
 
   const extension = path.extname(filePath).toLowerCase();
   const isVendoredAsset = filePath.startsWith(`${path.join(publicRoot, "vendor")}${path.sep}`);
+  const isTesseractWorker = filePath === path.join(
+    publicRoot,
+    "vendor",
+    "tesseract",
+    "worker.min.js",
+  );
   response.writeHead(200, {
-    ...SECURITY_HEADERS,
+    ...(isTesseractWorker ? TESSERACT_WORKER_SECURITY_HEADERS : SECURITY_HEADERS),
     "Cache-Control": isVendoredAsset ? "public, max-age=31536000, immutable" : "no-store",
     "Content-Length": fileStat.size,
     "Content-Type": MIME_TYPES.get(extension) ?? "application/octet-stream",

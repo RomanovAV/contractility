@@ -158,6 +158,7 @@ async function loadFile(file) {
       data: new Uint8Array(buffer),
       isEvalSupported: false,
       useSystemFonts: true,
+      wasmUrl: new URL("./vendor/pdfjs/wasm/", import.meta.url).href,
     });
     const pdf = await loadingTask.promise;
 
@@ -386,12 +387,9 @@ async function createOcrWorker(dpi) {
   let timeoutId;
   const workerPromise = createWorker(["rus", "eng"], 1, {
     workerPath: new URL("./vendor/tesseract/worker.min.js", import.meta.url).href,
-    // Фиксированный базовый LSTM-core запускается медленнее SIMD-вариантов,
-    // но одинаково работает в корпоративных браузерах с разным уровнем WASM.
-    corePath: new URL(
-      "./vendor/tesseract/core/tesseract-core-lstm.wasm.js",
-      import.meta.url,
-    ).href,
+    // Directory mode lets Tesseract select the fastest compatible local core
+    // (relaxed SIMD, SIMD, or baseline) for the current browser.
+    corePath: new URL("./vendor/tesseract/core/", import.meta.url).href,
     langPath: new URL("./vendor/tessdata/", import.meta.url).href,
     workerBlobURL: false,
     cacheMethod: "none",

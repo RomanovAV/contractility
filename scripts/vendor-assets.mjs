@@ -53,6 +53,16 @@ await copyFile(
   path.join(vendorRoot, "pdfjs", "pdf.worker.min.mjs"),
 );
 
+const pdfWasmSource = path.join(modulesRoot, "pdfjs-dist", "wasm");
+for (const entry of await readdir(pdfWasmSource, { withFileTypes: true })) {
+  if (entry.isFile()) {
+    await copyFile(
+      path.join(pdfWasmSource, entry.name),
+      path.join(vendorRoot, "pdfjs", "wasm", entry.name),
+    );
+  }
+}
+
 await copyFile(
   path.join(modulesRoot, "tesseract.js", "dist", "tesseract.esm.min.js"),
   path.join(vendorRoot, "tesseract", "tesseract.esm.min.js"),

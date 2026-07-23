@@ -3,6 +3,14 @@ import test from "node:test";
 import { startServer } from "../src/server.mjs";
 import { verifyVendorIntegrity } from "../src/vendor-integrity.mjs";
 
+async function stopServer(server) {
+  const stopped = new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  server.closeAllConnections?.();
+  await stopped;
+}
+
 test("vendored OCR files match the committed manifest", async () => {
   const result = await verifyVendorIntegrity();
   assert.equal(result.ok, true, JSON.stringify(result.failures, null, 2));
@@ -11,7 +19,7 @@ test("vendored OCR files match the committed manifest", async () => {
 
 test("local server exposes health and restrictive security headers", async (context) => {
   const server = await startServer({ port: 0 });
-  context.after(() => new Promise((resolve) => server.close(resolve)));
+  context.after(() => stopServer(server));
   const address = server.address();
   const origin = `http://127.0.0.1:${address.port}`;
 
@@ -38,17 +46,31 @@ test("local server exposes health and restrictive security headers", async (cont
   const diagnosticsScriptResponse = await fetch(`${origin}/diagnostics.mjs`);
   assert.equal(diagnosticsScriptResponse.status, 200);
   assert.match(diagnosticsScriptResponse.headers.get("content-type"), /text\/javascript/);
+  await diagnosticsScriptResponse.arrayBuffer();
 
   const workerResponse = await fetch(`${origin}/vendor/tesseract/worker.min.js`);
   assert.equal(workerResponse.status, 200);
   assert.match(workerResponse.headers.get("content-security-policy"), /'wasm-unsafe-eval'/);
-  assert.doesNotMatch(workerResponse.headers.get("content-security-policy"), /script-src[^;]*'unsafe-eval'/);
+  assert.match(workerResponse.headers.get("content-security-policy"), /script-src[^;]*'unsafe-eval'/);
+  await workerResponse.arrayBuffer();
+
+  const pdfWorkerResponse = await fetch(`${origin}/vendor/pdfjs/pdf.worker.min.mjs`);
+  assert.equal(pdfWorkerResponse.status, 200);
+  assert.match(pdfWorkerResponse.headers.get("content-security-policy"), /'wasm-unsafe-eval'/);
+  assert.doesNotMatch(pdfWorkerResponse.headers.get("content-security-policy"), /script-src[^;]*'unsafe-eval'/);
+  await pdfWorkerResponse.arrayBuffer();
+
+  const pdfWasmResponse = await fetch(`${origin}/vendor/pdfjs/wasm/jbig2.wasm`);
+  assert.equal(pdfWasmResponse.status, 200);
+  assert.match(pdfWasmResponse.headers.get("content-type"), /application\/wasm/);
+  await pdfWasmResponse.arrayBuffer();
 });
 
 test("local server rejects unsupported methods", async (context) => {
   const server = await startServer({ port: 0 });
-  context.after(() => new Promise((resolve) => server.close(resolve)));
+  context.after(() => stopServer(server));
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/`, { method: "POST" });
   assert.equal(response.status, 405);
+  await response.arrayBuffer();
 });

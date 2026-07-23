@@ -137,7 +137,7 @@ async function createDiagnosticWorker(report) {
   let timeoutId;
   const workerPromise = createWorker(["rus", "eng"], 1, {
     workerPath: new URL("./vendor/tesseract/worker.min.js", import.meta.url).href,
-    corePath: new URL("./vendor/tesseract/core/tesseract-core-lstm.wasm.js", import.meta.url).href,
+    corePath: new URL("./vendor/tesseract/core/", import.meta.url).href,
     langPath: new URL("./vendor/tessdata/", import.meta.url).href,
     workerBlobURL: false,
     cacheMethod: "none",
@@ -273,6 +273,7 @@ async function runDiagnostics(file) {
         data: new Uint8Array(buffer),
         isEvalSupported: false,
         useSystemFonts: true,
+        wasmUrl: new URL("./vendor/pdfjs/wasm/", import.meta.url).href,
       }).promise;
       currentReport.document.pageCount = pdf.numPages;
       return { pageCount: pdf.numPages };
