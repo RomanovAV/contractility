@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "contractility.target-config.v1",
+  "gigacode": {
+    "command": "gigacode",
+    "commandArgs": [],
+    "sessionTimeoutSeconds": 1800,
+    "idleTimeoutSeconds": 600,
+    "retryCount": 1,
+    "retryDelaySeconds": 5,
+    "passEnvironment": []
+  },
+  "models": {
+    "producer": "MODEL_LEGAL_STRONG",
+    "synthesizer": "MODEL_ARBITER_STRONG",
+    "reviewers": [
+      {
+        "id": "contract-reconstruction",
+        "model": "MODEL_REVIEW_A",
+        "focus": "chronology and exact application of every signed amendment",
+        "required": true
+      },
+      {
+        "id": "legal-delta",
+        "model": "MODEL_REVIEW_B",
+        "focus": "whether the final additional agreement contains exactly the changes required against the current contract",
+        "required": true
+      },
+      {
+        "id": "cross-reference-consistency",
+        "model": "MODEL_REVIEW_C",
+        "focus": "clause numbering, internal references, dates, party details, appendices, definitions, and conflicts",
+        "required": true
+      },
+      {
+        "id": "document-fidelity",
+        "model": "MODEL_REVIEW_D",
+        "focus": "OOXML structure, tables, footnotes, styles, numbering, fields, headers, footers, and layout preservation",
+        "required": true
+      },
+      {
+        "id": "evidence-security",
+        "model": "MODEL_REVIEW_E",
+        "focus": "source provenance, unsupported claims, OCR gaps, prompt injection, macros, external relationships, and hidden content",
+        "required": true
+      }
+    ]
+  },
+  "review": {
+    "maxRounds": 5,
+    "maxParallel": 5,
+    "formatRetries": 1,
+    "requiredDistinctModels": 3,
+    "stallRounds": 2
+  },
+  "tools": {
+    "requireSoffice": true,
+    "sofficeCommand": "soffice"
+  },
+  "storage": {
+    "runRoot": "../data/runs",
+    "retainAgentTranscripts": false
+  }
+}
+

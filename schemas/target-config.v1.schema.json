@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contractility.target-config.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "gigacode", "models", "review", "storage"],
+  "properties": {
+    "schemaVersion": { "const": "contractility.target-config.v1" },
+    "gigacode": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "commandArgs": { "type": "array", "items": { "type": "string" } },
+        "sessionTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "idleTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "retryCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "retryDelaySeconds": { "type": "number", "minimum": 0 },
+        "passEnvironment": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "models": {
+      "type": "object",
+      "required": ["producer", "synthesizer", "reviewers"],
+      "properties": {
+        "producer": { "type": "string", "minLength": 1 },
+        "synthesizer": { "type": "string", "minLength": 1 },
+        "reviewers": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["id", "model", "focus"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,48}$" },
+              "model": { "type": "string", "minLength": 1 },
+              "focus": { "type": "string", "minLength": 1 },
+              "required": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "maxRounds": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "maxParallel": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "formatRetries": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "requiredDistinctModels": { "type": "integer", "minimum": 2 },
+        "stallRounds": { "type": "integer", "minimum": 1, "maximum": 5 }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "requireSoffice": { "type": "boolean" },
+        "sofficeCommand": { "type": "string" }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": ["runRoot"],
+      "properties": {
+        "runRoot": { "type": "string", "minLength": 1 },
+        "retainAgentTranscripts": { "type": "boolean" }
+      }
+    }
+  }
+}
+

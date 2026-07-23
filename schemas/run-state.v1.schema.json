@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contractility.run-state.v1",
+  "type": "object",
+  "required": ["schemaVersion", "runId", "caseId", "status", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": { "const": "contractility.run-state.v1" },
+    "runId": { "type": "string" },
+    "caseId": { "type": "string" },
+    "status": {
+      "enum": [
+        "created",
+        "inputs-verified",
+        "candidate-created",
+        "reviewing",
+        "fixing",
+        "awaiting-human-approval",
+        "approved",
+        "finalized",
+        "blocked",
+        "failed"
+      ]
+    },
+    "candidateSha256": { "type": "string" },
+    "findingsSha256": { "type": "string" }
+  }
+}
+

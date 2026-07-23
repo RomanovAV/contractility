@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contractility.review-report.v1",
+  "type": "object",
+  "required": ["schemaVersion", "round", "candidateSha256", "reviewer", "verdict", "findings"],
+  "properties": {
+    "schemaVersion": { "const": "contractility.review-report.v1" },
+    "round": { "type": "integer", "minimum": 1 },
+    "candidateSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "reviewer": {
+      "type": "object",
+      "required": ["id", "requestedModel", "reportedModels", "required"]
+    },
+    "verdict": { "enum": ["pass", "changes-required"] },
+    "findings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "target",
+          "sourceDocumentId",
+          "page",
+          "clause",
+          "evidence",
+          "observed",
+          "impact",
+          "proposedAction",
+          "confidence"
+        ]
+      }
+    }
+  }
+}
+

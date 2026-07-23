@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <title>Contractility — распознавание договоров</title>
+    <title>Contractility — подготовка дополнительного соглашения</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -22,9 +22,9 @@
     <main>
       <section class="intro">
         <div>
-          <p class="eyebrow">Шаг 1 · OCR</p>
-          <h1>Получим проверяемый текст из сканированного договора</h1>
-          <p class="intro-copy">Комплект PDF обрабатывается в этом браузере. Первый файл считается договором, остальные — дополнительными соглашениями.</p>
+          <p class="eyebrow">Подготовка дополнительного соглашения</p>
+          <h1>Соберём действующую редакцию договора перед новыми изменениями</h1>
+          <p class="intro-copy">Исходный договор и все подписанные допсоглашения обрабатываются по порядку. Новая редакция в Word загружается отдельно и не смешивается с подписанными документами.</p>
         </div>
         <div class="privacy-card">
           <span class="privacy-icon" aria-hidden="true">⌁</span>
@@ -32,9 +32,16 @@
         </div>
       </section>
 
+      <ol class="workflow-strip" aria-label="Порядок формирования">
+        <li><span>01</span><strong>Исходный договор</strong><small>Подписанный PDF</small></li>
+        <li><span>02</span><strong>История изменений</strong><small>Подписанные PDF по порядку</small></li>
+        <li><span>03</span><strong>Новая редакция</strong><small>Отдельный DOCX</small></li>
+        <li><span>04</span><strong>Финальное соглашение</strong><small>После проверки изменений</small></li>
+      </ol>
+
       <section class="setup-card" aria-labelledby="source-title">
         <div class="section-heading">
-          <div><span class="step-number">01</span><div><h2 id="source-title">Комплект документов</h2><p>Сначала выберите договор, затем — любое количество дополнительных соглашений.</p></div></div>
+          <div><span class="step-number">01</span><div><h2 id="source-title">Подписанные документы в PDF</h2><p>Первым выберите договор, затем все допсоглашения в хронологическом порядке.</p></div></div>
           <div class="source-actions">
             <button id="add-files-button" class="text-button" type="button" hidden>+ Добавить документы</button>
             <button id="reset-button" class="text-button danger-text-button" type="button" hidden>Сбросить</button>
@@ -45,12 +52,24 @@
         <label id="drop-zone" class="drop-zone">
           <input id="file-input" type="file" accept="application/pdf,.pdf" multiple>
           <span class="upload-icon" aria-hidden="true">↑</span>
-          <strong>Выбрать один или несколько PDF</strong>
-          <span>Нажмите здесь или перетащите сразу весь комплект</span>
-          <small>В окне выбора можно выделить несколько файлов. Первый станет договором, остальные — доп. соглашениями.</small>
+          <strong>Выбрать подписанный договор и допсоглашения</strong>
+          <span>Нажмите здесь или перетащите весь комплект PDF</span>
+          <small>Первый файл станет исходным договором. Порядок остальных файлов можно исправить до распознавания.</small>
         </label>
 
         <div id="file-summary" class="file-summary" aria-live="polite" hidden></div>
+
+        <div class="draft-section" aria-labelledby="draft-title">
+          <div class="section-heading compact-heading">
+            <div><span class="step-number">02</span><div><h2 id="draft-title">Новая редакция допсоглашения</h2><p>Загрузите отдельно файл Word, который учитывает новые изменения к договору.</p></div></div>
+          </div>
+          <label id="draft-drop-zone" class="draft-drop-zone">
+            <input id="draft-file-input" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
+            <span class="docx-badge" aria-hidden="true">DOCX</span>
+            <span><strong>Выбрать новую редакцию</strong><small>Этот файл не считается подписанным допсоглашением</small></span>
+          </label>
+          <div id="draft-summary" class="draft-summary" aria-live="polite" hidden></div>
+        </div>
 
         <div class="settings-grid">
           <label>
@@ -132,17 +151,17 @@
       </section>
 
       <section id="export-card" class="export-card" hidden>
-        <div><p class="eyebrow">Результат</p><h2>Комплект OCR готов к проверке и анализу</h2><p>JSON сохраняет роли документов, SHA-256 каждого PDF, текст страниц, уверенность и нормализованные координаты строк.</p></div>
+        <div><p class="eyebrow">Следующий этап</p><h2>Пакет для формирования допсоглашения</h2><p id="formation-status">Завершите OCR и загрузите новую редакцию DOCX.</p></div>
         <div class="export-actions">
-          <button id="download-json" class="primary-button" type="button">Скачать OCR JSON</button>
-          <button id="download-text" class="secondary-button" type="button">Скачать текст</button>
+          <button id="download-json" class="primary-button" type="button" disabled>Скачать пакет JSON</button>
+          <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
         </div>
       </section>
 
       <div id="error-banner" class="error-banner" role="alert" hidden></div>
     </main>
 
-    <footer>Contractility MVP · PDF-файлы и распознанный текст обрабатываются локально</footer>
+    <footer>Contractility MVP · Подписанные PDF и новая редакция DOCX остаются на этом компьютере</footer>
     <script type="module" src="/app.mjs"></script>
   </body>
 </html>

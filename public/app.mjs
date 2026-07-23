@@ -3,7 +3,6 @@ import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
 import {
   createDocumentLabel,
   createOcrRenderPlan,
-  createTextExport,
   flattenOcrLines,
   humanFileSize,
   isUsefulPdfText,
@@ -11,6 +10,13 @@ import {
   readPdfTextLayer,
   resolveAdditionalPageRotation,
 } from "./ocr-utils.mjs";
+import {
+  buildFormationRequest,
+  createFormationTextExport,
+  moveHistoricalDocument,
+  normalizeDocumentOrder,
+  validateDraftAgreementFile,
+} from "./workflow-utils.mjs";
 
 const { createWorker } = Tesseract;
 
@@ -22,7 +28,8 @@ GlobalWorkerOptions.workerSrc = new URL(
 const elements = Object.fromEntries(
   [
     "add-files-button", "additional-file-input", "cancel-button", "confidence-badge",
-    "documents-list", "download-json", "download-text",
+    "documents-list", "download-json", "download-text", "draft-drop-zone",
+    "draft-file-input", "draft-summary",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-summary", "force-ocr", "next-page", "ocr-overlay", "overlay-toggle",
     "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
@@ -30,7 +37,7 @@ const elements = Object.fromEntries(
     "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
     "rotate-page-left", "rotate-page-right", "rotation-select", "start-button",
     "viewer-canvas", "viewer-document-label", "viewer-page-label", "viewer-position",
-    "viewer-stage", "workspace",
+    "viewer-stage", "workspace", "formation-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -47,6 +54,7 @@ const state = {
   processingDocument: null,
   processingPage: null,
   processingDetail: "",
+  draftAgreement: null,
 };
 
 const browserCapabilities = {
@@ -98,6 +106,37 @@ function completedPageCount() {
   );
 }
 
+function isOcrComplete() {
+  return totalPageCount() > 0
+    && completedPageCount() === totalPageCount()
+    && state.documents.every((document) => document.results.every((page) => page && !page.error));
+}
+
+function isFormationReady() {
+  return isOcrComplete() && Boolean(state.draftAgreement?.sha256);
+}
+
+function updateFormationState() {
+  const hasOcrResults = completedPageCount() > 0;
+  elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement;
+  elements["download-json"].disabled = !isFormationReady();
+  elements["download-text"].disabled = !isFormationReady();
+
+  if (isFormationReady()) {
+    elements["formation-status"].textContent =
+      "PDF-комплект распознан, порядок источников зафиксирован, DOCX проверен по SHA-256. Пакет готов для реконструкции действующей редакции и генерации финального файла.";
+  } else if (!isOcrComplete() && state.draftAgreement) {
+    elements["formation-status"].textContent =
+      "Новая редакция DOCX загружена. Завершите распознавание всех страниц подписанного комплекта.";
+  } else if (isOcrComplete()) {
+    elements["formation-status"].textContent =
+      "Подписанный комплект распознан. Загрузите новую редакцию дополнительного соглашения в DOCX.";
+  } else {
+    elements["formation-status"].textContent =
+      "Завершите OCR подписанных PDF и загрузите новую редакцию DOCX.";
+  }
+}
+
 function updateStartButtonLabel() {
   const total = totalPageCount();
   const completed = completedPageCount();
@@ -108,6 +147,7 @@ function updateStartButtonLabel() {
   } else {
     elements["start-button"].textContent = "Начать распознавание";
   }
+  updateFormationState();
 }
 
 function setError(message) {
@@ -133,6 +173,7 @@ function setRunning(running) {
   elements["add-files-button"].disabled = running || state.loading;
   elements["additional-file-input"].disabled = running || state.loading;
   elements["file-input"].disabled = running || state.loading;
+  elements["draft-file-input"].disabled = running || state.loading;
   elements["dpi-select"].disabled = running;
   elements["force-ocr"].disabled = running;
   elements["rotation-select"].disabled = running;
@@ -145,6 +186,8 @@ function setRunning(running) {
     elements["cancel-button"].disabled = false;
     elements["cancel-button"].textContent = "Остановить после страницы";
   }
+  renderFileSummary();
+  renderDraftAgreement();
 }
 
 function updateProgress({ percent, title, detail }) {
@@ -217,13 +260,106 @@ function renderFileSummary() {
     }
     description.append(role, name, meta);
 
-    const mark = globalThis.document.createElement("span");
-    mark.className = document.error ? "ready-mark failed" : "ready-mark";
-    mark.setAttribute("aria-label", document.pdf ? "Файл готов" : "Файл подготавливается");
-    mark.textContent = document.error ? "!" : document.pdf ? "✓" : String(index + 1);
-    item.append(icon, description, mark);
+    const trailing = globalThis.document.createElement("div");
+    if (index > 0) {
+      trailing.className = "file-order-actions";
+      const up = globalThis.document.createElement("button");
+      up.type = "button";
+      up.textContent = "↑";
+      up.title = "Переместить выше";
+      up.setAttribute("aria-label", `Переместить «${document.file.name}» выше`);
+      up.disabled = state.running || state.loading || index === 1;
+      up.addEventListener("click", () => reorderHistoricalDocument(index, -1));
+      const down = globalThis.document.createElement("button");
+      down.type = "button";
+      down.textContent = "↓";
+      down.title = "Переместить ниже";
+      down.setAttribute("aria-label", `Переместить «${document.file.name}» ниже`);
+      down.disabled = state.running || state.loading || index === state.documents.length - 1;
+      down.addEventListener("click", () => reorderHistoricalDocument(index, 1));
+      trailing.append(up, down);
+    } else {
+      trailing.className = document.error ? "ready-mark failed" : "ready-mark";
+      trailing.setAttribute("aria-label", document.pdf ? "Файл готов" : "Файл подготавливается");
+      trailing.textContent = document.error ? "!" : document.pdf ? "✓" : "1";
+    }
+    item.append(icon, description, trailing);
     elements["file-summary"].append(item);
   }
+}
+
+function reorderHistoricalDocument(index, direction) {
+  if (state.running || state.loading) return;
+  const selectedId = currentDocument()?.id;
+  const reordered = moveHistoricalDocument(state.documents, index, direction);
+  if (reordered === state.documents) return;
+  state.documents = reordered;
+  state.selectedDocument = Math.max(
+    0,
+    state.documents.findIndex((document) => document.id === selectedId),
+  );
+  renderFileSummary();
+  renderDocumentsList();
+  if (currentDocument()?.pdf) {
+    selectDocument(state.selectedDocument, state.selectedPage).catch(console.error);
+  }
+}
+
+function renderDraftAgreement() {
+  const draft = state.draftAgreement;
+  elements["draft-drop-zone"].hidden = Boolean(draft);
+  elements["draft-summary"].hidden = !draft;
+  elements["draft-summary"].replaceChildren();
+  if (!draft) {
+    updateFormationState();
+    return;
+  }
+
+  const badge = globalThis.document.createElement("span");
+  badge.className = "docx-badge";
+  badge.textContent = "DOCX";
+  const copy = globalThis.document.createElement("span");
+  copy.className = "draft-summary-copy";
+  const name = globalThis.document.createElement("strong");
+  name.textContent = draft.file.name;
+  const meta = globalThis.document.createElement("span");
+  meta.textContent = `${humanFileSize(draft.file.size)} · SHA-256 ${draft.sha256.slice(0, 12)}…`;
+  const note = globalThis.document.createElement("small");
+  note.textContent = "Новая редакция · не подписанный документ";
+  copy.append(name, meta, note);
+  const replace = globalThis.document.createElement("button");
+  replace.type = "button";
+  replace.className = "replace-draft-button";
+  replace.textContent = "Заменить";
+  replace.disabled = state.running || state.loading;
+  replace.addEventListener("click", () => {
+    elements["draft-file-input"].value = "";
+    elements["draft-file-input"].click();
+  });
+  elements["draft-summary"].append(badge, copy, replace);
+  updateFormationState();
+}
+
+async function loadDraftAgreement(fileList) {
+  if (state.running || state.loading) return;
+  const files = Array.from(fileList ?? []);
+  if (files.length !== 1) {
+    setError("Выберите один файл новой редакции в формате DOCX.");
+    return;
+  }
+  const file = files[0];
+  const validationError = validateDraftAgreementFile(file);
+  if (validationError) {
+    setError(validationError);
+    return;
+  }
+  setError("");
+  const buffer = await file.arrayBuffer();
+  state.draftAgreement = {
+    file,
+    sha256: await sha256(buffer),
+  };
+  renderDraftAgreement();
 }
 
 function validatePdfFiles(files) {
@@ -264,7 +400,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
       error: null,
     };
   });
-  state.documents = [...previousDocuments, ...addedDocuments];
+  state.documents = normalizeDocumentOrder([...previousDocuments, ...addedDocuments]);
   if (!append) clearResults();
   state.loading = true;
   elements["drop-zone"].hidden = true;
@@ -335,10 +471,12 @@ function resetDocuments() {
   if (state.running || state.loading) return;
   destroyDocuments();
   state.documents = [];
+  state.draftAgreement = null;
   state.selectedDocument = 0;
   state.selectedPage = 1;
   elements["file-input"].value = "";
   elements["additional-file-input"].value = "";
+  elements["draft-file-input"].value = "";
   elements["file-summary"].replaceChildren();
   elements["file-summary"].hidden = true;
   elements["drop-zone"].hidden = false;
@@ -347,6 +485,7 @@ function resetDocuments() {
   elements["start-button"].disabled = true;
   updateStartButtonLabel();
   clearResults();
+  renderDraftAgreement();
   setError("");
 }
 
@@ -746,7 +885,7 @@ async function runOcr() {
     state.processingDocument = null;
     state.processingPage = null;
     state.processingDetail = "";
-    elements["export-card"].hidden = true;
+    updateFormationState();
   }
   state.cancelRequested = false;
   setRunning(true);
@@ -816,7 +955,7 @@ async function runOcr() {
       title: state.cancelRequested ? "Распознавание остановлено" : "Распознавание завершено",
       detail: `Обработано ${processed} из ${totalPages} страниц в ${state.documents.length} док.`,
     });
-    elements["export-card"].hidden = processed === 0;
+    updateFormationState();
   } catch (error) {
     console.error(error);
     setError(`OCR не запустился: ${error.message ?? error}`);
@@ -828,6 +967,7 @@ async function runOcr() {
     state.processingDetail = "";
     setRunning(false);
     renderPageList();
+    updateFormationState();
   }
 }
 
@@ -851,7 +991,8 @@ function buildDocumentResult() {
       },
       pageCount: document.pdf.numPages,
       pageRotationOverrides: { ...document.pageRotationOverrides },
-      complete: document.results.filter(Boolean).length === document.pdf.numPages,
+      complete: document.results.filter(Boolean).length === document.pdf.numPages
+        && document.results.every((page) => page && !page.error),
       pages: document.results.filter(Boolean),
     })),
     engine: {
@@ -862,8 +1003,24 @@ function buildDocumentResult() {
       browserEnvironment,
     },
     settings,
-    complete: completedPageCount() === totalPageCount(),
+    complete: isOcrComplete(),
   };
+}
+
+function buildCurrentFormationRequest() {
+  if (!state.draftAgreement) {
+    throw new TypeError("Загрузите новую редакцию дополнительного соглашения DOCX.");
+  }
+  const { file, sha256: draftSha256 } = state.draftAgreement;
+  return buildFormationRequest({
+    ocrResult: buildDocumentResult(),
+    draftAgreement: {
+      name: file.name,
+      size: file.size,
+      lastModified: new Date(file.lastModified).toISOString(),
+      sha256: draftSha256,
+    },
+  });
 }
 
 function download(name, type, content) {
@@ -887,6 +1044,12 @@ elements["add-files-button"].addEventListener("click", () => {
 });
 elements["additional-file-input"].addEventListener("change", (event) => {
   loadDocuments(event.target.files, { append: true });
+});
+elements["draft-file-input"].addEventListener("change", (event) => {
+  loadDraftAgreement(event.target.files).catch((error) => {
+    console.error(error);
+    setError(`Не удалось прочитать DOCX: ${error.message ?? error}`);
+  });
 });
 elements["reset-button"].addEventListener("click", resetDocuments);
 elements["start-button"].addEventListener("click", runOcr);
@@ -922,15 +1085,28 @@ elements["page-text"].addEventListener("input", () => {
   renderPageList();
 });
 elements["download-json"].addEventListener("click", () => {
-  const result = buildDocumentResult();
-  download(`${baseFileName()}.bundle.ocr.json`, "application/json", `${JSON.stringify(result, null, 2)}\n`);
+  try {
+    const result = buildCurrentFormationRequest();
+    download(
+      `${baseFileName()}.formation-request.json`,
+      "application/json",
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
+  } catch (error) {
+    setError(error.message ?? String(error));
+  }
 });
 elements["download-text"].addEventListener("click", () => {
-  download(
-    `${baseFileName()}.bundle.ocr.txt`,
-    "text/plain;charset=utf-8",
-    createTextExport(buildDocumentResult()),
-  );
+  try {
+    const result = buildCurrentFormationRequest();
+    download(
+      `${baseFileName()}.formation-request.txt`,
+      "text/plain;charset=utf-8",
+      createFormationTextExport(result),
+    );
+  } catch (error) {
+    setError(error.message ?? String(error));
+  }
 });
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -946,6 +1122,25 @@ for (const eventName of ["dragleave", "drop"]) {
   });
 }
 elements["drop-zone"].addEventListener("drop", (event) => loadDocuments(event.dataTransfer.files));
+
+for (const eventName of ["dragenter", "dragover"]) {
+  elements["draft-drop-zone"].addEventListener(eventName, (event) => {
+    event.preventDefault();
+    elements["draft-drop-zone"].classList.add("dragging");
+  });
+}
+for (const eventName of ["dragleave", "drop"]) {
+  elements["draft-drop-zone"].addEventListener(eventName, (event) => {
+    event.preventDefault();
+    elements["draft-drop-zone"].classList.remove("dragging");
+  });
+}
+elements["draft-drop-zone"].addEventListener("drop", (event) => {
+  loadDraftAgreement(event.dataTransfer.files).catch((error) => {
+    console.error(error);
+    setError(`Не удалось прочитать DOCX: ${error.message ?? error}`);
+  });
+});
 
 window.addEventListener("resize", () => {
   if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
