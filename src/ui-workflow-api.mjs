@@ -246,6 +246,7 @@ async function readLastGigacodeStatus(runDirectory) {
       model: event.model ?? null,
       source: event.source ?? null,
       ok: typeof event.ok === "boolean" ? event.ok : null,
+      knownCliCancellation: event.knownCliCancellation === true,
       durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null,
       outputChars: Number.isFinite(event.outputChars) ? event.outputChars : null,
     };

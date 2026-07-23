@@ -45,7 +45,21 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
     path.join(artifacts, "change-register.json"),
     `${JSON.stringify({ changes: [] }, null, 2)}\n`,
   );
-  emit({ status: "candidate-ready" });
+  if (mode === "producer-cancel") {
+    process.stdout.write(`${JSON.stringify({
+      type: "system",
+      session_id: `fake-${model}`,
+      model,
+    })}\n`);
+    process.stderr.write(
+      "(node:85131) MaxListenersExceededWarning: Possible EventTarget memory leak detected. "
+      + "11 abort listeners added to [AbortSignal]. MaxListeners is 10.\n"
+      + "Operation cancelled.\n",
+    );
+    process.exitCode = 1;
+  } else {
+    emit({ status: "candidate-ready" });
+  }
 } else if (prompt.includes("independent read-only review")) {
   if (mode === "fix-once") {
     const roundDirectory = await latestRoundDirectory();

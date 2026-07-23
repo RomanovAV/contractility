@@ -195,7 +195,7 @@ test("target config enforces multiple distinct reviewer models", () => {
   assert.throws(() => validateTargetConfig(config), /минимум 3 разных моделей/);
 });
 
-test("full fake target run stops at approval and finalizes only after matching hashes", async () => {
+test("full run recovers a complete producer candidate after known GigaCode CLI cancellation", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-target-"));
   const contract = Buffer.from("%PDF-1.4\ncontract\n%%EOF\n");
@@ -244,27 +244,38 @@ test("full fake target run stops at approval and finalizes only after matching h
     },
     outputRoot: path.join(temporary, "cases"),
   });
-  const config = targetConfig(path.join(temporary, "runs"));
-  const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
-  assert.equal(run.state.status, "awaiting-human-approval");
-  await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
-  await assert.rejects(() => approveRun({
-    runDirectory: run.runDirectory,
-    approver: "Test Operator",
-    candidateSha256: "wrong",
-    findingsSha256: run.state.findingsSha256,
-  }), /Хеш кандидата/);
-  await approveRun({
-    runDirectory: run.runDirectory,
-    approver: "Test Operator",
-    candidateSha256: run.state.candidateSha256,
-    findingsSha256: run.state.findingsSha256,
-  });
-  const finalized = await finalizeRun(run.runDirectory);
-  assert.equal(finalized.state.status, "finalized");
-  const verified = await verifyRun(run.runDirectory);
-  assert.equal(verified.ok, true);
-  assert.equal(verified.sha256, finalized.manifest.sha256);
+  process.env.FAKE_GIGACODE_MODE = "producer-cancel";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    assert.match(
+      await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8"),
+      /"event":"producer\.recovered"/,
+    );
+    await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
+    await assert.rejects(() => approveRun({
+      runDirectory: run.runDirectory,
+      approver: "Test Operator",
+      candidateSha256: "wrong",
+      findingsSha256: run.state.findingsSha256,
+    }), /Хеш кандидата/);
+    await approveRun({
+      runDirectory: run.runDirectory,
+      approver: "Test Operator",
+      candidateSha256: run.state.candidateSha256,
+      findingsSha256: run.state.findingsSha256,
+    });
+    const finalized = await finalizeRun(run.runDirectory);
+    assert.equal(finalized.state.status, "finalized");
+    const verified = await verifyRun(run.runDirectory);
+    assert.equal(verified.ok, true);
+    assert.equal(verified.sha256, finalized.manifest.sha256);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
 });
 
 test("review loop applies an arbiter fix and reruns all reviewers on a new candidate", async () => {

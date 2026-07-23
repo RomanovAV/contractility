@@ -381,30 +381,56 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       onEvent: eventRecorder(runDirectory),
       transcriptDirectory: transcriptDirectory(config, runDirectory),
     });
+    let recoveredFromCliCancellation = false;
     if (!producerResult.ok) {
-      throw new Error(`Producer завершился с ошибкой: ${producerResult.stderr || producerResult.output}`);
+      if (!producerResult.knownCliCancellation) {
+        throw new Error(`Producer завершился с ошибкой: ${producerResult.stderr || producerResult.output}`);
+      }
+      if (producerResult.reportedModels.length > 0) {
+        assertRequestedModel(producerResult, config.models.producer);
+      }
+      recoveredFromCliCancellation = true;
     }
-    assertRequestedModel(producerResult, config.models.producer);
-    let producerStatus;
+    if (!recoveredFromCliCancellation) {
+      assertRequestedModel(producerResult, config.models.producer);
+      let producerStatus;
+      try {
+        producerStatus = JSON.parse(producerResult.output);
+      } catch {
+        throw new Error("Producer вернул некорректный JSON-статус.");
+      }
+      if (producerStatus.status === "blocked") {
+        state = await writeState(runDirectory, {
+          ...state,
+          status: "blocked",
+          blocker: producerStatus.reason ?? "Producer запросил ручное решение.",
+        });
+        return { runId, runDirectory, state };
+      }
+      if (producerStatus.status !== "candidate-ready") {
+        throw new Error("Producer не подтвердил готовность кандидата.");
+      }
+    }
+    let candidate;
     try {
-      producerStatus = JSON.parse(producerResult.output);
-    } catch {
-      throw new Error("Producer вернул некорректный JSON-статус.");
+      await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+      await requireProducerArtifacts(firstRoundDirectory);
+      candidate = await validateCandidate(firstRoundDirectory, referenceInventory, config);
+    } catch (error) {
+      if (recoveredFromCliCancellation) {
+        throw new Error(
+          `GigaCode CLI отменил операцию после MaxListenersExceededWarning, `
+          + `но комплект кандидата не готов: ${error.message}`,
+        );
+      }
+      throw error;
     }
-    if (producerStatus.status === "blocked") {
-      state = await writeState(runDirectory, {
-        ...state,
-        status: "blocked",
-        blocker: producerStatus.reason ?? "Producer запросил ручное решение.",
+    if (recoveredFromCliCancellation) {
+      await appendEvent(runDirectory, "producer.recovered", {
+        reason: "known-gigacode-cli-cancellation",
+        attempt: producerResult.attempt,
       });
-      return { runId, runDirectory, state };
     }
-    if (producerStatus.status !== "candidate-ready") {
-      throw new Error("Producer не подтвердил готовность кандидата.");
-    }
-    await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
-    await requireProducerArtifacts(firstRoundDirectory);
-    let candidate = await validateCandidate(firstRoundDirectory, referenceInventory, config);
     state = await writeState(runDirectory, {
       ...state,
       status: "candidate-created",

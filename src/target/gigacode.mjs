@@ -18,6 +18,8 @@ const TRANSIENT_PATTERNS = [
   "429 Too Many Requests",
   "Rate limit exceeded",
 ];
+const ABORT_LISTENER_WARNING = "abort listeners added to [abortsignal]";
+const OPERATION_CANCELLED = "operation cancelled";
 const MAX_CAPTURE_CHARS = 2_000_000;
 const MAX_TRANSCRIPT_BYTES = 2_000_000;
 const activeChildren = new Set();
@@ -86,6 +88,13 @@ function decodeStreamJson(text) {
     models: [...models],
     usage,
   };
+}
+
+function isKnownCliCancellation(text) {
+  const normalized = text.toLowerCase();
+  return normalized.includes("maxlistenersexceededwarning")
+    && normalized.includes(ABORT_LISTENER_WARNING)
+    && normalized.includes(OPERATION_CANCELLED);
 }
 
 function terminateProcess(child, reason) {
@@ -309,7 +318,8 @@ async function runOnce({
   const decoded = decodeStreamJson(stdout);
   const combined = `${decoded.output}\n${stderr}`;
   const approvalUnavailable = combined.includes(APPROVAL_UNAVAILABLE);
-  const transient = TRANSIENT_PATTERNS.some((pattern) =>
+  const knownCliCancellation = isKnownCliCancellation(combined);
+  const transient = knownCliCancellation || TRANSIENT_PATTERNS.some((pattern) =>
     combined.toLowerCase().includes(pattern.toLowerCase()));
   const response = {
     ok: result.code === 0
@@ -323,6 +333,7 @@ async function runOnce({
     idleTimedOut,
     outputLimited,
     approvalUnavailable,
+    knownCliCancellation,
     transient,
     output: decoded.output.trim(),
     stderr: stderr.trim(),
@@ -335,6 +346,7 @@ async function runOnce({
     session,
     model,
     ok: response.ok,
+    knownCliCancellation: response.knownCliCancellation,
     returnCode: response.returnCode,
     durationMs: response.durationMs,
     outputChars: response.output.length,
@@ -351,6 +363,7 @@ async function runOnce({
       timedOut: response.timedOut,
       idleTimedOut: response.idleTimedOut,
       outputLimited: response.outputLimited,
+      knownCliCancellation: response.knownCliCancellation,
       transcriptLimited: transcript?.limited ?? false,
       durationMs: response.durationMs,
       outputChars: response.output.length,

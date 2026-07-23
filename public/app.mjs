@@ -1185,10 +1185,16 @@ function renderGigacodeStatus(status) {
     activity: status.source === "stderr"
       ? "Получено служебное сообщение"
       : "Получен новый фрагмент ответа",
-    finished: status.ok ? "Ответ GigaCode получен" : "Ответ завершился с ошибкой",
+    finished: status.knownCliCancellation
+      ? "Известная отмена GigaCode CLI — проверяем сохранённый кандидат"
+      : status.ok ? "Ответ GigaCode получен" : "Ответ завершился с ошибкой",
   };
   const active = ["prepared", "started", "activity"].includes(status.phase);
-  container.classList.add(active ? "active" : status.ok === false ? "failed" : "good");
+  container.classList.add(
+    active || status.knownCliCancellation
+      ? "active"
+      : status.ok === false ? "failed" : "good",
+  );
   elements["gigacode-activity-title"].textContent =
     phaseLabels[status.phase] ?? `Событие GigaCode: ${status.phase}`;
   const details = [
