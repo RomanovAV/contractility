@@ -51,6 +51,9 @@ h2 { margin-bottom: 0; font-size: 18px; line-height: 1.25; }
 .section-heading p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 .step-number { display: inline-grid; place-items: center; flex: 0 0 auto; min-width: 32px; height: 32px; padding: 0 6px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: 0.08em; }
 .text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; }
+.text-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.danger-text-button { color: var(--danger); }
+.source-actions { display: flex; align-items: center; gap: 8px; }
 
 .drop-zone { min-height: 185px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed #aac6ba; border-radius: 16px; background: #f8fbfa; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, transform 160ms ease; }
 .drop-zone:hover, .drop-zone.dragging { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
@@ -187,6 +190,8 @@ footer { padding: 26px 24px 38px; color: #829089; text-align: center; font-size:
   main { width: min(100% - 24px, 1440px); padding-top: 32px; }
   .intro { grid-template-columns: 1fr; gap: 20px; }
   h1 { font-size: 38px; }
+  .section-heading { align-items: flex-start; flex-direction: column; }
+  .source-actions { width: 100%; justify-content: flex-end; }
   .settings-grid { grid-template-columns: 1fr; }
   .action-row, .export-card, .export-actions { align-items: stretch; flex-direction: column; }
   .action-row > span { margin: 4px 0 0; }

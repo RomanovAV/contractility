@@ -37,7 +37,12 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexResponse.headers.get("content-security-policy"), /worker-src 'self'/);
   assert.match(indexResponse.headers.get("content-security-policy"), /'wasm-unsafe-eval'/);
   assert.doesNotMatch(indexResponse.headers.get("content-security-policy"), /script-src[^;]*'unsafe-eval'/);
-  assert.match(await indexResponse.text(), /Contractility/);
+  const indexHtml = await indexResponse.text();
+  assert.match(indexHtml, /Contractility/);
+  assert.match(indexHtml, /id="file-input"[^>]*multiple/);
+  assert.match(indexHtml, /id="additional-file-input"[^>]*multiple/);
+  assert.match(indexHtml, />\+ Добавить документы</);
+  assert.match(indexHtml, />Сбросить</);
 
   const diagnosticsResponse = await fetch(`${origin}/diagnostics.html`);
   assert.equal(diagnosticsResponse.status, 200);

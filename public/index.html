@@ -35,15 +35,19 @@
       <section class="setup-card" aria-labelledby="source-title">
         <div class="section-heading">
           <div><span class="step-number">01</span><div><h2 id="source-title">Комплект документов</h2><p>Сначала выберите договор, затем — любое количество дополнительных соглашений.</p></div></div>
-          <button id="reset-button" class="text-button" type="button" hidden>Выбрать другие</button>
+          <div class="source-actions">
+            <button id="add-files-button" class="text-button" type="button" hidden>+ Добавить документы</button>
+            <button id="reset-button" class="text-button danger-text-button" type="button" hidden>Сбросить</button>
+            <input id="additional-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+          </div>
         </div>
 
         <label id="drop-zone" class="drop-zone">
           <input id="file-input" type="file" accept="application/pdf,.pdf" multiple>
           <span class="upload-icon" aria-hidden="true">↑</span>
-          <strong>Перетащите PDF-файлы сюда</strong>
-          <span>или нажмите, чтобы выбрать один или несколько файлов</span>
-          <small>Первый файл — договор, остальные — доп. соглашения. Документы не покинут компьютер.</small>
+          <strong>Выбрать один или несколько PDF</strong>
+          <span>Нажмите здесь или перетащите сразу весь комплект</span>
+          <small>В окне выбора можно выделить несколько файлов. Первый станет договором, остальные — доп. соглашениями.</small>
         </label>
 
         <div id="file-summary" class="file-summary" aria-live="polite" hidden></div>
@@ -112,7 +116,7 @@
             <button id="rotate-page-left" type="button" aria-label="Повернуть выбранную страницу влево">↶</button>
             <span id="page-rotation-label">Авто</span>
             <button id="rotate-page-right" type="button" aria-label="Повернуть выбранную страницу вправо">↷</button>
-            <button id="reset-page-rotation" class="rotation-reset-button" type="button" disabled>Сбросить</button>
+            <button id="reset-page-rotation" class="rotation-reset-button" type="button" disabled>Сбросить поворот</button>
           </div>
         </section>
 

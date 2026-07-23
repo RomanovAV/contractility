@@ -21,7 +21,8 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "cancel-button", "confidence-badge", "documents-list", "download-json", "download-text",
+    "add-files-button", "additional-file-input", "cancel-button", "confidence-badge",
+    "documents-list", "download-json", "download-text",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-summary", "force-ocr", "next-page", "ocr-overlay", "overlay-toggle",
     "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
@@ -97,6 +98,18 @@ function completedPageCount() {
   );
 }
 
+function updateStartButtonLabel() {
+  const total = totalPageCount();
+  const completed = completedPageCount();
+  if (total > 0 && completed === total) {
+    elements["start-button"].textContent = "Распознать заново";
+  } else if (completed > 0) {
+    elements["start-button"].textContent = "Распознать новые документы";
+  } else {
+    elements["start-button"].textContent = "Начать распознавание";
+  }
+}
+
 function setError(message) {
   elements["error-banner"].textContent = message;
   elements["error-banner"].hidden = !message;
@@ -112,10 +125,13 @@ function serializeError(error) {
 
 function setRunning(running) {
   state.running = running;
+  updateStartButtonLabel();
   const document = currentDocument();
   elements["start-button"].disabled = running || state.loading || !hasReadyDocuments();
   elements["cancel-button"].hidden = !running;
   elements["reset-button"].disabled = running || state.loading;
+  elements["add-files-button"].disabled = running || state.loading;
+  elements["additional-file-input"].disabled = running || state.loading;
   elements["file-input"].disabled = running || state.loading;
   elements["dpi-select"].disabled = running;
   elements["force-ocr"].disabled = running;
@@ -161,6 +177,7 @@ function clearResults({ hideWorkspace = true } = {}) {
   elements["workspace"].hidden = hideWorkspace;
   elements["export-card"].hidden = true;
   elements["progress-card"].hidden = true;
+  updateStartButtonLabel();
 }
 
 function destroyDocuments(documents = state.documents) {
@@ -219,7 +236,7 @@ function validatePdfFiles(files) {
   return invalid ? `Файл «${invalid.name}» не является PDF.` : "";
 }
 
-async function loadDocuments(fileList) {
+async function loadDocuments(fileList, { append = false } = {}) {
   if (state.running || state.loading) return;
   const files = Array.from(fileList ?? []);
   const validationError = validatePdfFiles(files);
@@ -229,28 +246,37 @@ async function loadDocuments(fileList) {
   }
 
   setError("");
-  destroyDocuments();
-  state.documents = files.map((file, index) => ({
-    id: `document-${index + 1}`,
-    role: index === 0 ? "contract" : "additional-agreement",
-    label: createDocumentLabel(index),
-    file,
-    fileHash: null,
-    pdf: null,
-    results: [],
-    pageRotationOverrides: {},
-    error: null,
-  }));
-  clearResults();
+  const previousDocuments = append ? [...state.documents] : [];
+  const previousSelectedDocument = state.selectedDocument;
+  const startIndex = previousDocuments.length;
+  if (!append) destroyDocuments();
+  const addedDocuments = files.map((file, offset) => {
+    const index = startIndex + offset;
+    return {
+      id: `document-${index + 1}`,
+      role: index === 0 ? "contract" : "additional-agreement",
+      label: createDocumentLabel(index),
+      file,
+      fileHash: null,
+      pdf: null,
+      results: [],
+      pageRotationOverrides: {},
+      error: null,
+    };
+  });
+  state.documents = [...previousDocuments, ...addedDocuments];
+  if (!append) clearResults();
   state.loading = true;
   elements["drop-zone"].hidden = true;
   elements["file-summary"].hidden = false;
+  elements["add-files-button"].hidden = false;
+  elements["add-files-button"].disabled = true;
   elements["reset-button"].hidden = false;
   elements["start-button"].disabled = true;
   renderFileSummary();
 
   try {
-    for (const document of state.documents) {
+    for (const document of addedDocuments) {
       const buffer = await document.file.arrayBuffer();
       document.fileHash = await sha256(buffer);
       const loadingTask = getDocument({
@@ -264,21 +290,43 @@ async function loadDocuments(fileList) {
     }
 
     state.loading = false;
+    elements["add-files-button"].disabled = false;
     elements["start-button"].disabled = false;
     elements["workspace"].hidden = false;
     renderDocumentsList();
-    await selectDocument(0, 1);
+    await selectDocument(append ? startIndex : 0, 1);
+    if (append && completedPageCount() > 0) {
+      updateProgress({
+        percent: (completedPageCount() / totalPageCount()) * 100,
+        title: "Комплект дополнен",
+        detail: `Обработано ${completedPageCount()} из ${totalPageCount()} страниц`,
+      });
+    }
+    updateStartButtonLabel();
   } catch (error) {
     console.error(error);
-    const failedDocument = state.documents.find((document) => !document.pdf);
+    const failedDocument = addedDocuments.find((document) => !document.pdf);
     if (failedDocument) failedDocument.error = serializeError(error);
     renderFileSummary();
-    destroyDocuments();
-    for (const document of state.documents) {
-      document.pdf = null;
+    destroyDocuments(addedDocuments);
+    if (append) {
+      state.documents = previousDocuments;
+      state.selectedDocument = Math.min(
+        previousSelectedDocument,
+        Math.max(0, previousDocuments.length - 1),
+      );
+      renderFileSummary();
+      renderDocumentsList();
+    } else {
+      for (const document of state.documents) {
+        document.pdf = null;
+      }
     }
     state.loading = false;
-    elements["start-button"].disabled = true;
+    elements["add-files-button"].hidden = !hasReadyDocuments();
+    elements["add-files-button"].disabled = false;
+    elements["start-button"].disabled = !hasReadyDocuments();
+    updateStartButtonLabel();
     setError(`Не удалось открыть «${failedDocument?.file.name ?? "PDF"}»: ${error.message ?? error}`);
   }
 }
@@ -290,11 +338,14 @@ function resetDocuments() {
   state.selectedDocument = 0;
   state.selectedPage = 1;
   elements["file-input"].value = "";
+  elements["additional-file-input"].value = "";
   elements["file-summary"].replaceChildren();
   elements["file-summary"].hidden = true;
   elements["drop-zone"].hidden = false;
+  elements["add-files-button"].hidden = true;
   elements["reset-button"].hidden = true;
   elements["start-button"].disabled = true;
+  updateStartButtonLabel();
   clearResults();
   setError("");
 }
@@ -330,7 +381,7 @@ function initializePageList(document = currentDocument()) {
     button.dataset.page = String(number);
     button.innerHTML = `
       <span class="page-number">${number}</span>
-      <span class="page-state"><strong>Готова</strong><span>Нажмите «Начать распознавание»</span></span>
+      <span class="page-state"><strong>Готова</strong><span>Нажмите кнопку распознавания</span></span>
     `;
     button.addEventListener("click", () => selectPage(number));
     elements["pages-list"].append(button);
@@ -346,7 +397,7 @@ function pageState(result, pageNumber = null) {
     return { title: "Обработка", detail: state.processingDetail || "Подготавливается страница", tone: "warning" };
   }
   if (!result && state.running) return { title: "В очереди", detail: "Ожидает обработки", tone: "" };
-  if (!result) return { title: "Готова", detail: "Нажмите «Начать распознавание»", tone: "" };
+  if (!result) return { title: "Готова", detail: "Нажмите кнопку распознавания", tone: "" };
   if (result.error) return { title: "Ошибка", detail: result.error, tone: "failed" };
   if (result.source === "pdf-text") return { title: "Текст PDF", detail: "OCR не потребовался", tone: "good" };
   if (!normalizeWhitespace(result.text)) return { title: "Пустая", detail: "Текст не найден", tone: "warning" };
@@ -377,6 +428,7 @@ function renderPageList() {
     const activeButton = elements["documents-list"].querySelector(`[data-document="${state.selectedDocument}"] small`);
     if (activeButton) activeButton.textContent = `${completed} / ${document.pdf?.numPages ?? 0} стр.`;
   }
+  updateStartButtonLabel();
 }
 
 async function renderPreview(pageNumber) {
@@ -684,9 +736,19 @@ async function runOcr() {
     return;
   }
   setError("");
-  clearResults({ hideWorkspace: false });
+  const completedBeforeRun = completedPageCount();
+  const totalBeforeRun = totalPageCount();
+  const resumeIncompleteRun = completedBeforeRun > 0 && completedBeforeRun < totalBeforeRun;
+  if (!resumeIncompleteRun) {
+    clearResults({ hideWorkspace: false });
+    state.startedAt = new Date().toISOString();
+  } else {
+    state.processingDocument = null;
+    state.processingPage = null;
+    state.processingDetail = "";
+    elements["export-card"].hidden = true;
+  }
   state.cancelRequested = false;
-  state.startedAt = new Date().toISOString();
   setRunning(true);
   state.processingDetail = "Подготовка OCR";
   await selectDocument(0, 1);
@@ -695,12 +757,17 @@ async function runOcr() {
   const totalPages = totalPageCount();
 
   try {
-    updateProgress({ percent: 0, title: "Подготовка документов", detail: "Проверяется текстовый слой PDF…" });
+    updateProgress({
+      percent: (completedPageCount() / totalPages) * 100,
+      title: "Подготовка документов",
+      detail: "Проверяется текстовый слой PDF…",
+    });
 
     processing:
     for (const [documentIndex, document] of state.documents.entries()) {
       for (let pageNumber = 1; pageNumber <= document.pdf.numPages; pageNumber += 1) {
         if (state.cancelRequested) break processing;
+        if (document.results[pageNumber - 1]) continue;
         state.processingDocument = documentIndex;
         state.processingPage = pageNumber;
         state.processingDetail = "Подготавливается изображение страницы";
@@ -814,6 +881,13 @@ function baseFileName() {
 }
 
 elements["file-input"].addEventListener("change", (event) => loadDocuments(event.target.files));
+elements["add-files-button"].addEventListener("click", () => {
+  elements["additional-file-input"].value = "";
+  elements["additional-file-input"].click();
+});
+elements["additional-file-input"].addEventListener("change", (event) => {
+  loadDocuments(event.target.files, { append: true });
+});
 elements["reset-button"].addEventListener("click", resetDocuments);
 elements["start-button"].addEventListener("click", runOcr);
 elements["cancel-button"].addEventListener("click", () => {
