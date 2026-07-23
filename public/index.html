@@ -24,7 +24,7 @@
         <div>
           <p class="eyebrow">Шаг 1 · OCR</p>
           <h1>Получим проверяемый текст из сканированного договора</h1>
-          <p class="intro-copy">PDF обрабатывается в этом браузере. Для каждой страницы сохраняются текст, уверенность распознавания и координаты строк.</p>
+          <p class="intro-copy">Комплект PDF обрабатывается в этом браузере. Первый файл считается договором, остальные — дополнительными соглашениями.</p>
         </div>
         <div class="privacy-card">
           <span class="privacy-icon" aria-hidden="true">⌁</span>
@@ -34,23 +34,19 @@
 
       <section class="setup-card" aria-labelledby="source-title">
         <div class="section-heading">
-          <div><span class="step-number">01</span><div><h2 id="source-title">Исходный PDF</h2><p>Выберите один договор или дополнительное соглашение.</p></div></div>
-          <button id="reset-button" class="text-button" type="button" hidden>Выбрать другой</button>
+          <div><span class="step-number">01</span><div><h2 id="source-title">Комплект документов</h2><p>Сначала выберите договор, затем — любое количество дополнительных соглашений.</p></div></div>
+          <button id="reset-button" class="text-button" type="button" hidden>Выбрать другие</button>
         </div>
 
         <label id="drop-zone" class="drop-zone">
-          <input id="file-input" type="file" accept="application/pdf,.pdf">
+          <input id="file-input" type="file" accept="application/pdf,.pdf" multiple>
           <span class="upload-icon" aria-hidden="true">↑</span>
-          <strong>Перетащите PDF сюда</strong>
-          <span>или нажмите, чтобы выбрать файл</span>
-          <small>Документ не покинет компьютер</small>
+          <strong>Перетащите PDF-файлы сюда</strong>
+          <span>или нажмите, чтобы выбрать один или несколько файлов</span>
+          <small>Первый файл — договор, остальные — доп. соглашения. Документы не покинут компьютер.</small>
         </label>
 
-        <div id="file-summary" class="file-summary" hidden>
-          <div class="file-icon" aria-hidden="true">PDF</div>
-          <div class="file-description"><strong id="file-name"></strong><span id="file-meta"></span></div>
-          <span id="file-ready" class="ready-mark" aria-label="Файл готов">✓</span>
-        </div>
+        <div id="file-summary" class="file-summary" aria-live="polite" hidden></div>
 
         <div class="settings-grid">
           <label>
@@ -92,13 +88,14 @@
 
       <section id="workspace" class="workspace" hidden>
         <aside class="pages-panel">
-          <div class="panel-heading"><div><span class="step-number">02</span><h2>Страницы</h2></div><span id="pages-counter">0 / 0</span></div>
+          <div class="panel-heading"><div><span class="step-number">02</span><h2>Документы</h2></div><span id="pages-counter">0 / 0</span></div>
+          <div id="documents-list" class="documents-list"></div>
           <div id="pages-list" class="pages-list"></div>
         </aside>
 
         <section class="viewer-panel">
           <div class="panel-heading">
-            <div><h2>Оригинал</h2><span id="viewer-page-label">Страница 1</span></div>
+            <div><h2>Оригинал</h2><span id="viewer-document-label">Договор</span><span id="viewer-page-label">Страница 1</span></div>
             <label class="overlay-toggle"><input id="overlay-toggle" type="checkbox" checked> Области OCR</label>
           </div>
           <div id="viewer-stage" class="viewer-stage">
@@ -131,7 +128,7 @@
       </section>
 
       <section id="export-card" class="export-card" hidden>
-        <div><p class="eyebrow">Результат</p><h2>OCR-слой готов к проверке и анализу</h2><p>JSON содержит SHA-256 исходного PDF, текст страниц, уверенность и нормализованные координаты строк.</p></div>
+        <div><p class="eyebrow">Результат</p><h2>Комплект OCR готов к проверке и анализу</h2><p>JSON сохраняет роли документов, SHA-256 каждого PDF, текст страниц, уверенность и нормализованные координаты строк.</p></div>
         <div class="export-actions">
           <button id="download-json" class="primary-button" type="button">Скачать OCR JSON</button>
           <button id="download-text" class="secondary-button" type="button">Скачать текст</button>
@@ -141,7 +138,7 @@
       <div id="error-banner" class="error-banner" role="alert" hidden></div>
     </main>
 
-    <footer>Contractility MVP · PDF и распознанный текст обрабатываются локально</footer>
+    <footer>Contractility MVP · PDF-файлы и распознанный текст обрабатываются локально</footer>
     <script type="module" src="/app.mjs"></script>
   </body>
 </html>

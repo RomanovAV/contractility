@@ -1,6 +1,7 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.min.mjs";
 import Tesseract from "./vendor/tesseract/tesseract.esm.min.js";
 import {
+  createDocumentLabel,
   createOcrRenderPlan,
   createTextExport,
   flattenOcrLines,
@@ -20,31 +21,31 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "cancel-button", "confidence-badge", "download-json", "download-text",
+    "cancel-button", "confidence-badge", "documents-list", "download-json", "download-text",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
-    "file-meta", "file-name", "file-summary", "force-ocr", "next-page", "ocr-overlay",
-    "overlay-toggle", "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
-    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail", "progress-percent", "reset-page-rotation",
-    "rotate-page-left", "rotate-page-right", "rotation-select",
-    "progress-title", "reset-button", "start-button", "viewer-canvas", "viewer-page-label",
-    "viewer-position", "viewer-stage", "workspace",
+    "file-summary", "force-ocr", "next-page", "ocr-overlay", "overlay-toggle",
+    "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
+    "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail",
+    "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
+    "rotate-page-left", "rotate-page-right", "rotation-select", "start-button",
+    "viewer-canvas", "viewer-document-label", "viewer-page-label", "viewer-position",
+    "viewer-stage", "workspace",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
 const state = {
-  file: null,
-  fileHash: null,
-  pdf: null,
-  results: [],
+  documents: [],
+  selectedDocument: 0,
+  selectedPage: 1,
   worker: null,
   running: false,
+  loading: false,
   cancelRequested: false,
-  selectedPage: 1,
   previewRequest: 0,
   startedAt: null,
+  processingDocument: null,
   processingPage: null,
   processingDetail: "",
-  pageRotationOverrides: {},
 };
 
 const browserCapabilities = {
@@ -77,6 +78,25 @@ const statusLabels = {
   "recognizing text": "Распознаётся текст страницы",
 };
 
+function currentDocument() {
+  return state.documents[state.selectedDocument] ?? null;
+}
+
+function hasReadyDocuments() {
+  return state.documents.length > 0 && state.documents.every((document) => document.pdf);
+}
+
+function totalPageCount() {
+  return state.documents.reduce((total, document) => total + (document.pdf?.numPages ?? 0), 0);
+}
+
+function completedPageCount() {
+  return state.documents.reduce(
+    (total, document) => total + document.results.filter(Boolean).length,
+    0,
+  );
+}
+
 function setError(message) {
   elements["error-banner"].textContent = message;
   elements["error-banner"].hidden = !message;
@@ -92,18 +112,19 @@ function serializeError(error) {
 
 function setRunning(running) {
   state.running = running;
-  elements["start-button"].disabled = running || !state.pdf;
+  const document = currentDocument();
+  elements["start-button"].disabled = running || state.loading || !hasReadyDocuments();
   elements["cancel-button"].hidden = !running;
-  elements["reset-button"].disabled = running;
-  elements["file-input"].disabled = running;
+  elements["reset-button"].disabled = running || state.loading;
+  elements["file-input"].disabled = running || state.loading;
   elements["dpi-select"].disabled = running;
   elements["force-ocr"].disabled = running;
   elements["rotation-select"].disabled = running;
-  elements["rotate-page-left"].disabled = running || !state.pdf;
-  elements["rotate-page-right"].disabled = running || !state.pdf;
+  elements["rotate-page-left"].disabled = running || !document?.pdf;
+  elements["rotate-page-right"].disabled = running || !document?.pdf;
   elements["reset-page-rotation"].disabled = running
-    || !state.pdf
-    || state.pageRotationOverrides[String(state.selectedPage)] == null;
+    || !document?.pdf
+    || document.pageRotationOverrides[String(state.selectedPage)] == null;
   if (running) {
     elements["cancel-button"].disabled = false;
     elements["cancel-button"].textContent = "Остановить после страницы";
@@ -124,72 +145,152 @@ async function sha256(arrayBuffer) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function clearResults() {
-  state.results = [];
+function clearResults({ hideWorkspace = true } = {}) {
+  for (const document of state.documents) {
+    document.results = [];
+  }
+  state.processingDocument = null;
   state.processingPage = null;
   state.processingDetail = "";
+  state.selectedDocument = 0;
   state.selectedPage = 1;
+  elements["documents-list"].replaceChildren();
   elements["pages-list"].replaceChildren();
   elements["page-text"].value = "";
   elements["page-text"].disabled = true;
-  elements["workspace"].hidden = true;
+  elements["workspace"].hidden = hideWorkspace;
   elements["export-card"].hidden = true;
   elements["progress-card"].hidden = true;
 }
 
-async function loadFile(file) {
-  if (!file || (file.type && file.type !== "application/pdf") || !file.name.toLowerCase().endsWith(".pdf")) {
-    setError("Выберите файл PDF.");
+function destroyDocuments(documents = state.documents) {
+  for (const document of documents) {
+    if (typeof document.pdf?.destroy === "function") {
+      Promise.resolve(document.pdf.destroy()).catch(console.error);
+    }
+  }
+}
+
+function renderFileSummary() {
+  elements["file-summary"].replaceChildren();
+  for (const [index, document] of state.documents.entries()) {
+    const item = globalThis.document.createElement("div");
+    item.className = "file-summary-item";
+
+    const icon = globalThis.document.createElement("div");
+    icon.className = "file-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "PDF";
+
+    const description = globalThis.document.createElement("div");
+    description.className = "file-description";
+    const role = globalThis.document.createElement("span");
+    role.className = "document-role";
+    role.textContent = document.label;
+    const name = globalThis.document.createElement("strong");
+    name.textContent = document.file.name;
+    const meta = globalThis.document.createElement("span");
+    if (document.error) {
+      meta.className = "file-error";
+      meta.textContent = "Не удалось открыть PDF";
+    } else if (document.pdf) {
+      meta.textContent = `${humanFileSize(document.file.size)} · ${document.pdf.numPages} стр. · SHA-256 ${document.fileHash.slice(0, 12)}…`;
+    } else {
+      meta.textContent = `${humanFileSize(document.file.size)} · подготовка…`;
+    }
+    description.append(role, name, meta);
+
+    const mark = globalThis.document.createElement("span");
+    mark.className = document.error ? "ready-mark failed" : "ready-mark";
+    mark.setAttribute("aria-label", document.pdf ? "Файл готов" : "Файл подготавливается");
+    mark.textContent = document.error ? "!" : document.pdf ? "✓" : String(index + 1);
+    item.append(icon, description, mark);
+    elements["file-summary"].append(item);
+  }
+}
+
+function validatePdfFiles(files) {
+  if (files.length === 0) {
+    return "Выберите хотя бы один PDF-файл.";
+  }
+  const invalid = files.find(
+    (file) => (file.type && file.type !== "application/pdf") || !file.name.toLowerCase().endsWith(".pdf"),
+  );
+  return invalid ? `Файл «${invalid.name}» не является PDF.` : "";
+}
+
+async function loadDocuments(fileList) {
+  if (state.running || state.loading) return;
+  const files = Array.from(fileList ?? []);
+  const validationError = validatePdfFiles(files);
+  if (validationError) {
+    setError(validationError);
     return;
   }
 
   setError("");
+  destroyDocuments();
+  state.documents = files.map((file, index) => ({
+    id: `document-${index + 1}`,
+    role: index === 0 ? "contract" : "additional-agreement",
+    label: createDocumentLabel(index),
+    file,
+    fileHash: null,
+    pdf: null,
+    results: [],
+    pageRotationOverrides: {},
+    error: null,
+  }));
   clearResults();
+  state.loading = true;
   elements["drop-zone"].hidden = true;
   elements["file-summary"].hidden = false;
   elements["reset-button"].hidden = false;
-  elements["file-name"].textContent = file.name;
-  elements["file-meta"].textContent = `${humanFileSize(file.size)} · вычисляется контрольная сумма…`;
+  elements["start-button"].disabled = true;
+  renderFileSummary();
 
   try {
-    const buffer = await file.arrayBuffer();
-    const hash = await sha256(buffer);
-    const loadingTask = getDocument({
-      data: new Uint8Array(buffer),
-      isEvalSupported: false,
-      useSystemFonts: true,
-      wasmUrl: new URL("./vendor/pdfjs/wasm/", import.meta.url).href,
-    });
-    const pdf = await loadingTask.promise;
+    for (const document of state.documents) {
+      const buffer = await document.file.arrayBuffer();
+      document.fileHash = await sha256(buffer);
+      const loadingTask = getDocument({
+        data: new Uint8Array(buffer),
+        isEvalSupported: false,
+        useSystemFonts: true,
+        wasmUrl: new URL("./vendor/pdfjs/wasm/", import.meta.url).href,
+      });
+      document.pdf = await loadingTask.promise;
+      renderFileSummary();
+    }
 
-    state.file = file;
-    state.fileHash = hash;
-    state.pdf = pdf;
-    state.pageRotationOverrides = {};
-    elements["file-meta"].textContent = `${humanFileSize(file.size)} · ${pdf.numPages} стр. · SHA-256 ${hash.slice(0, 12)}…`;
+    state.loading = false;
     elements["start-button"].disabled = false;
     elements["workspace"].hidden = false;
-    initializePageList(pdf.numPages);
-    await selectPage(1);
+    renderDocumentsList();
+    await selectDocument(0, 1);
   } catch (error) {
     console.error(error);
-    state.file = null;
-    state.pdf = null;
+    const failedDocument = state.documents.find((document) => !document.pdf);
+    if (failedDocument) failedDocument.error = serializeError(error);
+    renderFileSummary();
+    destroyDocuments();
+    for (const document of state.documents) {
+      document.pdf = null;
+    }
+    state.loading = false;
     elements["start-button"].disabled = true;
-    setError(`Не удалось открыть PDF: ${error.message ?? error}`);
+    setError(`Не удалось открыть «${failedDocument?.file.name ?? "PDF"}»: ${error.message ?? error}`);
   }
 }
 
-function resetFile() {
-  if (state.running) return;
-  if (typeof state.pdf?.destroy === "function") {
-    Promise.resolve(state.pdf.destroy()).catch(console.error);
-  }
-  state.file = null;
-  state.fileHash = null;
-  state.pdf = null;
-  state.pageRotationOverrides = {};
+function resetDocuments() {
+  if (state.running || state.loading) return;
+  destroyDocuments();
+  state.documents = [];
+  state.selectedDocument = 0;
+  state.selectedPage = 1;
   elements["file-input"].value = "";
+  elements["file-summary"].replaceChildren();
   elements["file-summary"].hidden = true;
   elements["drop-zone"].hidden = false;
   elements["reset-button"].hidden = true;
@@ -198,10 +299,32 @@ function resetFile() {
   setError("");
 }
 
-function initializePageList(pageCount) {
+function renderDocumentsList() {
+  elements["documents-list"].replaceChildren();
+  for (const [index, document] of state.documents.entries()) {
+    const button = globalThis.document.createElement("button");
+    button.type = "button";
+    button.className = "document-item";
+    button.classList.toggle("selected", index === state.selectedDocument);
+    button.dataset.document = String(index);
+
+    const role = globalThis.document.createElement("strong");
+    role.textContent = document.label;
+    const fileName = globalThis.document.createElement("span");
+    fileName.textContent = document.file.name;
+    const progress = globalThis.document.createElement("small");
+    progress.textContent = `${document.results.filter(Boolean).length} / ${document.pdf?.numPages ?? 0} стр.`;
+    button.append(role, fileName, progress);
+    button.addEventListener("click", () => selectDocument(index, 1));
+    elements["documents-list"].append(button);
+  }
+}
+
+function initializePageList(document = currentDocument()) {
   elements["pages-list"].replaceChildren();
-  for (let number = 1; number <= pageCount; number += 1) {
-    const button = document.createElement("button");
+  if (!document?.pdf) return;
+  for (let number = 1; number <= document.pdf.numPages; number += 1) {
+    const button = globalThis.document.createElement("button");
     button.type = "button";
     button.className = "page-item";
     button.dataset.page = String(number);
@@ -212,11 +335,14 @@ function initializePageList(pageCount) {
     button.addEventListener("click", () => selectPage(number));
     elements["pages-list"].append(button);
   }
-  elements["pages-counter"].textContent = `0 / ${pageCount}`;
+  renderPageList();
 }
 
 function pageState(result, pageNumber = null) {
-  if (!result && state.running && pageNumber === state.processingPage) {
+  const isProcessing = state.running
+    && state.selectedDocument === state.processingDocument
+    && pageNumber === state.processingPage;
+  if (!result && isProcessing) {
     return { title: "Обработка", detail: state.processingDetail || "Подготавливается страница", tone: "warning" };
   }
   if (!result && state.running) return { title: "В очереди", detail: "Ожидает обработки", tone: "" };
@@ -230,31 +356,39 @@ function pageState(result, pageNumber = null) {
 }
 
 function renderPageList() {
-  const completed = state.results.filter(Boolean).length;
-  elements["pages-counter"].textContent = `${completed} / ${state.pdf?.numPages ?? 0}`;
+  const document = currentDocument();
+  const completed = document?.results.filter(Boolean).length ?? 0;
+  elements["pages-counter"].textContent = `${completedPageCount()} / ${totalPageCount()}`;
+  renderDocumentsList();
   for (const button of elements["pages-list"].querySelectorAll(".page-item")) {
     const pageNumber = Number(button.dataset.page);
-    const pageResult = state.results[pageNumber - 1];
+    const pageResult = document?.results[pageNumber - 1];
     const view = pageState(pageResult, pageNumber);
     button.classList.toggle("selected", pageNumber === state.selectedPage);
     const stateElement = button.querySelector(".page-state");
-    const title = document.createElement("strong");
+    const title = globalThis.document.createElement("strong");
     title.className = view.tone;
     title.textContent = view.title;
-    const detail = document.createElement("span");
+    const detail = globalThis.document.createElement("span");
     detail.textContent = view.detail;
     stateElement.replaceChildren(title, detail);
+  }
+  if (document) {
+    const activeButton = elements["documents-list"].querySelector(`[data-document="${state.selectedDocument}"] small`);
+    if (activeButton) activeButton.textContent = `${completed} / ${document.pdf?.numPages ?? 0} стр.`;
   }
 }
 
 async function renderPreview(pageNumber) {
-  if (!state.pdf) return;
+  const document = currentDocument();
+  if (!document?.pdf) return;
   const requestId = ++state.previewRequest;
-  const page = await state.pdf.getPage(pageNumber);
+  const selectedDocument = state.selectedDocument;
+  const page = await document.pdf.getPage(pageNumber);
   const displayedViewport = page.getViewport({ scale: 1 });
   const additionalRotation = resolveAdditionalPageRotation(
     displayedViewport,
-    rotationModeForPage(pageNumber),
+    rotationModeForPage(pageNumber, null, document),
   );
   const rotation = (page.rotate + additionalRotation) % 360;
   const baseViewport = page.getViewport({ scale: 1, rotation });
@@ -273,8 +407,8 @@ async function renderPreview(pageNumber) {
   elements["page-surface"].style.height = canvas.style.height;
 
   await page.render({ canvasContext: context, viewport }).promise;
-  if (requestId !== state.previewRequest) return;
-  renderOverlay(state.results[pageNumber - 1]?.lines ?? []);
+  if (requestId !== state.previewRequest || selectedDocument !== state.selectedDocument) return;
+  renderOverlay(document.results[pageNumber - 1]?.lines ?? []);
 }
 
 function renderOverlay(lines) {
@@ -294,7 +428,7 @@ function renderOverlay(lines) {
 }
 
 function updateTextPanel() {
-  const result = state.results[state.selectedPage - 1];
+  const result = currentDocument()?.results[state.selectedPage - 1];
   elements["page-text"].value = result?.text ?? "";
   elements["page-text"].disabled = !result || Boolean(result.error);
   elements["edit-note"].hidden = !result?.manuallyEdited;
@@ -315,8 +449,8 @@ function updateTextPanel() {
   }
 }
 
-function rotationModeForPage(pageNumber, settings = null) {
-  const overrides = settings?.pageRotationOverrides ?? state.pageRotationOverrides;
+function rotationModeForPage(pageNumber, settings = null, document = currentDocument()) {
+  const overrides = document?.pageRotationOverrides ?? {};
   return overrides[String(pageNumber)] ?? settings?.rotationMode ?? elements["rotation-select"].value;
 }
 
@@ -332,35 +466,49 @@ function rotationLabel(mode) {
 }
 
 function updatePageRotationControls() {
-  const override = state.pageRotationOverrides[String(state.selectedPage)];
+  const document = currentDocument();
+  const override = document?.pageRotationOverrides[String(state.selectedPage)];
   const mode = override ?? elements["rotation-select"].value;
   elements["page-rotation-label"].textContent = override == null
     ? `По умолчанию: ${rotationLabel(mode)}`
     : rotationLabel(mode);
-  elements["rotate-page-left"].disabled = state.running || !state.pdf;
-  elements["rotate-page-right"].disabled = state.running || !state.pdf;
-  elements["reset-page-rotation"].disabled = state.running || !state.pdf || override == null;
+  elements["rotate-page-left"].disabled = state.running || !document?.pdf;
+  elements["rotate-page-right"].disabled = state.running || !document?.pdf;
+  elements["reset-page-rotation"].disabled = state.running || !document?.pdf || override == null;
 }
 
 async function rotateSelectedPage(delta) {
-  if (!state.pdf || state.running) return;
-  const page = await state.pdf.getPage(state.selectedPage);
+  const document = currentDocument();
+  if (!document?.pdf || state.running) return;
+  const page = await document.pdf.getPage(state.selectedPage);
   const displayedViewport = page.getViewport({ scale: 1 });
-  const currentMode = rotationModeForPage(state.selectedPage);
+  const currentMode = rotationModeForPage(state.selectedPage, null, document);
   const currentRotation = resolveAdditionalPageRotation(displayedViewport, currentMode);
   const nextRotation = (currentRotation + delta + 360) % 360;
-  state.pageRotationOverrides[String(state.selectedPage)] = String(nextRotation);
+  document.pageRotationOverrides[String(state.selectedPage)] = String(nextRotation);
   updatePageRotationControls();
   await renderPreview(state.selectedPage);
 }
 
+async function selectDocument(documentIndex, pageNumber = 1) {
+  const document = state.documents[documentIndex];
+  if (!document?.pdf) return;
+  state.selectedDocument = documentIndex;
+  state.selectedPage = Math.max(1, Math.min(pageNumber, document.pdf.numPages));
+  renderDocumentsList();
+  initializePageList(document);
+  await selectPage(state.selectedPage);
+}
+
 async function selectPage(pageNumber) {
-  if (!state.pdf || pageNumber < 1 || pageNumber > state.pdf.numPages) return;
+  const document = currentDocument();
+  if (!document?.pdf || pageNumber < 1 || pageNumber > document.pdf.numPages) return;
   state.selectedPage = pageNumber;
+  elements["viewer-document-label"].textContent = document.label;
   elements["viewer-page-label"].textContent = `Страница ${pageNumber}`;
-  elements["viewer-position"].textContent = `${pageNumber} / ${state.pdf.numPages}`;
+  elements["viewer-position"].textContent = `${pageNumber} / ${document.pdf.numPages}`;
   elements["previous-page"].disabled = pageNumber === 1;
-  elements["next-page"].disabled = pageNumber === state.pdf.numPages;
+  elements["next-page"].disabled = pageNumber === document.pdf.numPages;
   renderPageList();
   updateTextPanel();
   updatePageRotationControls();
@@ -387,8 +535,6 @@ async function createOcrWorker(dpi) {
   let timeoutId;
   const workerPromise = createWorker(["rus", "eng"], 1, {
     workerPath: new URL("./vendor/tesseract/worker.min.js", import.meta.url).href,
-    // Directory mode lets Tesseract select the fastest compatible local core
-    // (relaxed SIMD, SIMD, or baseline) for the current browser.
     corePath: new URL("./vendor/tesseract/core/", import.meta.url).href,
     langPath: new URL("./vendor/tessdata/", import.meta.url).href,
     workerBlobURL: false,
@@ -396,11 +542,14 @@ async function createOcrWorker(dpi) {
     gzip: true,
     logger(message) {
       const detail = statusLabels[message.status] ?? message.status;
-      const completedPages = state.results.filter(Boolean).length;
-      const totalPages = state.pdf?.numPages ?? 1;
       const currentProgress = message.status === "recognizing text" ? message.progress : 0;
-      const percent = ((completedPages + currentProgress) / totalPages) * 100;
-      updateProgress({ percent, title: "Подготовка и распознавание", detail });
+      const percent = ((completedPageCount() + currentProgress) / Math.max(1, totalPageCount())) * 100;
+      const processingDocument = state.documents[state.processingDocument];
+      updateProgress({
+        percent,
+        title: processingDocument ? `${processingDocument.label} · распознавание` : "Подготовка и распознавание",
+        detail,
+      });
       if (state.processingPage) {
         state.processingDetail = message.status === "recognizing text"
           ? `Распознавание ${Math.round((message.progress ?? 0) * 100)}%`
@@ -438,9 +587,9 @@ async function createOcrWorker(dpi) {
   return worker;
 }
 
-async function recognizePage(pageNumber, settings) {
+async function recognizePage(document, documentIndex, pageNumber, settings) {
   const startedAt = performance.now();
-  const page = await state.pdf.getPage(pageNumber);
+  const page = await document.pdf.getPage(pageNumber);
   const pdfTextLayer = await readPdfTextLayer(page, { skip: settings.forceOcr });
 
   if (pdfTextLayer.error) {
@@ -459,26 +608,31 @@ async function recognizePage(pageNumber, settings) {
     };
   }
 
+  const rotationMode = rotationModeForPage(pageNumber, settings, document);
+  if (!state.worker) {
+    updateProgress({
+      percent: (completedPageCount() / Math.max(1, totalPageCount())) * 100,
+      title: `${document.label} · подготовка OCR`,
+      detail: "Читаются локальные компоненты…",
+    });
+    state.worker = await createOcrWorker(settings.dpi);
+  }
   const { canvas, additionalRotation, renderPlan } = await renderOcrCanvas(
     page,
     settings.dpi,
-    rotationModeForPage(pageNumber, settings),
+    rotationMode,
   );
   try {
-    // Large scans can be rendered below the selected DPI to stay inside Safari's
-    // Canvas limits. Tell Tesseract the effective value used for this page.
     await state.worker.setParameters({
       user_defined_dpi: String(Math.round(renderPlan.effectiveDpi)),
     });
-    // Use the normal Canvas path when available. Data URL remains a compatibility
-    // fallback for browsers that do not provide the toBlob method Tesseract uses.
     const useDataUrlTransport = !browserCapabilities.canvasToBlob;
     const ocrInput = useDataUrlTransport ? canvas.toDataURL("image/png") : canvas;
     const recognition = await state.worker.recognize(
       ocrInput,
-      { rotateAuto: rotationModeForPage(pageNumber, settings) === "auto" },
+      { rotateAuto: rotationMode === "auto" },
       { text: true, blocks: true },
-      `page-${pageNumber}`,
+      `document-${documentIndex + 1}-page-${pageNumber}`,
     );
     const text = normalizeWhitespace(recognition.data.text);
     const lines = flattenOcrLines(recognition.data.blocks, canvas.width, canvas.height);
@@ -516,13 +670,12 @@ function readSettings() {
     forceOcr: elements["force-ocr"].checked,
     autoRotate: rotationMode === "auto",
     rotationMode,
-    pageRotationOverrides: { ...state.pageRotationOverrides },
     languages: ["rus", "eng"],
   };
 }
 
 async function runOcr() {
-  if (!state.pdf || state.running) return;
+  if (!hasReadyDocuments() || state.running) return;
   if (missingBrowserCapabilities.length > 0) {
     setError(
       `Этот браузер не предоставляет необходимые возможности: ${missingBrowserCapabilities.join(", ")}. `
@@ -531,63 +684,70 @@ async function runOcr() {
     return;
   }
   setError("");
-  clearResults();
-  elements["workspace"].hidden = false;
-  initializePageList(state.pdf.numPages);
+  clearResults({ hideWorkspace: false });
   state.cancelRequested = false;
   state.startedAt = new Date().toISOString();
   setRunning(true);
   state.processingDetail = "Подготовка OCR";
-  renderPageList();
+  await selectDocument(0, 1);
 
   const settings = readSettings();
+  const totalPages = totalPageCount();
 
   try {
-    updateProgress({ percent: 0, title: "Подготовка OCR", detail: "Читаются локальные компоненты…" });
-    state.worker = await createOcrWorker(settings.dpi);
+    updateProgress({ percent: 0, title: "Подготовка документов", detail: "Проверяется текстовый слой PDF…" });
 
-    for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber += 1) {
-      if (state.cancelRequested) break;
-      state.processingPage = pageNumber;
-      state.processingDetail = "Подготавливается изображение страницы";
-      renderPageList();
-      updateProgress({
-        percent: ((pageNumber - 1) / state.pdf.numPages) * 100,
-        title: `Страница ${pageNumber} из ${state.pdf.numPages}`,
-        detail: "Подготавливается изображение страницы",
-      });
+    processing:
+    for (const [documentIndex, document] of state.documents.entries()) {
+      for (let pageNumber = 1; pageNumber <= document.pdf.numPages; pageNumber += 1) {
+        if (state.cancelRequested) break processing;
+        state.processingDocument = documentIndex;
+        state.processingPage = pageNumber;
+        state.processingDetail = "Подготавливается изображение страницы";
+        await selectDocument(documentIndex, pageNumber);
+        updateProgress({
+          percent: (completedPageCount() / totalPages) * 100,
+          title: `${document.label} · страница ${pageNumber} из ${document.pdf.numPages}`,
+          detail: "Подготавливается изображение страницы",
+        });
 
-      try {
-        state.results[pageNumber - 1] = await recognizePage(pageNumber, settings);
-      } catch (error) {
-        console.error(error);
-        state.results[pageNumber - 1] = {
-          number: pageNumber,
-          source: "error",
-          text: "",
-          confidence: 0,
-          lines: [],
-          error: error.message ?? String(error),
-          errorDetails: serializeError(error),
-        };
+        try {
+          document.results[pageNumber - 1] = await recognizePage(
+            document,
+            documentIndex,
+            pageNumber,
+            settings,
+          );
+        } catch (error) {
+          console.error(error);
+          document.results[pageNumber - 1] = {
+            number: pageNumber,
+            source: "error",
+            text: "",
+            confidence: 0,
+            lines: [],
+            error: error.message ?? String(error),
+            errorDetails: serializeError(error),
+          };
+        }
+
+        state.processingPage = null;
+        state.processingDetail = "";
+        renderPageList();
+        await selectPage(pageNumber);
+        updateProgress({
+          percent: (completedPageCount() / totalPages) * 100,
+          title: `${document.label} · обработано страниц: ${pageNumber}`,
+          detail: pageState(document.results[pageNumber - 1], pageNumber).detail,
+        });
       }
-
-      state.processingPage = null;
-      state.processingDetail = "";
-      renderPageList();
-      await selectPage(pageNumber);
-      updateProgress({
-        percent: (pageNumber / state.pdf.numPages) * 100,
-        title: `Обработано страниц: ${pageNumber}`,
-        detail: pageState(state.results[pageNumber - 1], pageNumber).detail,
-      });
     }
 
-    const processed = state.results.filter(Boolean).length;
+    const processed = completedPageCount();
     updateProgress({
-      percent: (processed / state.pdf.numPages) * 100,
+      percent: (processed / totalPages) * 100,
       title: state.cancelRequested ? "Распознавание остановлено" : "Распознавание завершено",
-      detail: `Обработано ${processed} из ${state.pdf.numPages} страниц`,
+      detail: `Обработано ${processed} из ${totalPages} страниц в ${state.documents.length} док.`,
     });
     elements["export-card"].hidden = processed === 0;
   } catch (error) {
@@ -596,6 +756,7 @@ async function runOcr() {
   } finally {
     await state.worker?.terminate().catch(console.error);
     state.worker = null;
+    state.processingDocument = null;
     state.processingPage = null;
     state.processingDetail = "";
     setRunning(false);
@@ -606,16 +767,26 @@ async function runOcr() {
 function buildDocumentResult() {
   const settings = readSettings();
   return {
-    schemaVersion: "contractility.ocr.v1",
+    schemaVersion: "contractility.ocr.v2",
     createdAt: new Date().toISOString(),
     startedAt: state.startedAt,
-    document: {
-      name: state.file.name,
-      size: state.file.size,
-      lastModified: new Date(state.file.lastModified).toISOString(),
-      sha256: state.fileHash,
-      pageCount: state.pdf.numPages,
-    },
+    documentCount: state.documents.length,
+    documents: state.documents.map((document, index) => ({
+      id: document.id,
+      role: document.role,
+      label: document.label,
+      order: index + 1,
+      file: {
+        name: document.file.name,
+        size: document.file.size,
+        lastModified: new Date(document.file.lastModified).toISOString(),
+        sha256: document.fileHash,
+      },
+      pageCount: document.pdf.numPages,
+      pageRotationOverrides: { ...document.pageRotationOverrides },
+      complete: document.results.filter(Boolean).length === document.pdf.numPages,
+      pages: document.results.filter(Boolean),
+    })),
     engine: {
       pdf: "pdfjs-dist@6.1.200",
       ocr: "tesseract.js@7.0.0",
@@ -624,8 +795,7 @@ function buildDocumentResult() {
       browserEnvironment,
     },
     settings,
-    complete: state.results.filter(Boolean).length === state.pdf.numPages,
-    pages: state.results.filter(Boolean),
+    complete: completedPageCount() === totalPageCount(),
   };
 }
 
@@ -640,11 +810,11 @@ function download(name, type, content) {
 }
 
 function baseFileName() {
-  return state.file.name.replace(/\.pdf$/i, "");
+  return state.documents[0]?.file.name.replace(/\.pdf$/i, "") ?? "contract";
 }
 
-elements["file-input"].addEventListener("change", (event) => loadFile(event.target.files[0]));
-elements["reset-button"].addEventListener("click", resetFile);
+elements["file-input"].addEventListener("change", (event) => loadDocuments(event.target.files));
+elements["reset-button"].addEventListener("click", resetDocuments);
 elements["start-button"].addEventListener("click", runOcr);
 elements["cancel-button"].addEventListener("click", () => {
   state.cancelRequested = true;
@@ -653,20 +823,24 @@ elements["cancel-button"].addEventListener("click", () => {
 });
 elements["previous-page"].addEventListener("click", () => selectPage(state.selectedPage - 1));
 elements["next-page"].addEventListener("click", () => selectPage(state.selectedPage + 1));
-elements["overlay-toggle"].addEventListener("change", () => renderOverlay(state.results[state.selectedPage - 1]?.lines ?? []));
+elements["overlay-toggle"].addEventListener("change", () => {
+  renderOverlay(currentDocument()?.results[state.selectedPage - 1]?.lines ?? []);
+});
 elements["rotation-select"].addEventListener("change", () => {
   updatePageRotationControls();
-  if (state.pdf) renderPreview(state.selectedPage).catch(console.error);
+  if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
 });
 elements["rotate-page-left"].addEventListener("click", () => rotateSelectedPage(-90).catch(console.error));
 elements["rotate-page-right"].addEventListener("click", () => rotateSelectedPage(90).catch(console.error));
 elements["reset-page-rotation"].addEventListener("click", () => {
-  delete state.pageRotationOverrides[String(state.selectedPage)];
+  const document = currentDocument();
+  if (!document) return;
+  delete document.pageRotationOverrides[String(state.selectedPage)];
   updatePageRotationControls();
   renderPreview(state.selectedPage).catch(console.error);
 });
 elements["page-text"].addEventListener("input", () => {
-  const result = state.results[state.selectedPage - 1];
+  const result = currentDocument()?.results[state.selectedPage - 1];
   if (!result) return;
   result.text = elements["page-text"].value;
   result.manuallyEdited = true;
@@ -675,10 +849,14 @@ elements["page-text"].addEventListener("input", () => {
 });
 elements["download-json"].addEventListener("click", () => {
   const result = buildDocumentResult();
-  download(`${baseFileName()}.ocr.json`, "application/json", `${JSON.stringify(result, null, 2)}\n`);
+  download(`${baseFileName()}.bundle.ocr.json`, "application/json", `${JSON.stringify(result, null, 2)}\n`);
 });
 elements["download-text"].addEventListener("click", () => {
-  download(`${baseFileName()}.ocr.txt`, "text/plain;charset=utf-8", createTextExport(buildDocumentResult()));
+  download(
+    `${baseFileName()}.bundle.ocr.txt`,
+    "text/plain;charset=utf-8",
+    createTextExport(buildDocumentResult()),
+  );
 });
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -693,8 +871,8 @@ for (const eventName of ["dragleave", "drop"]) {
     elements["drop-zone"].classList.remove("dragging");
   });
 }
-elements["drop-zone"].addEventListener("drop", (event) => loadFile(event.dataTransfer.files[0]));
+elements["drop-zone"].addEventListener("drop", (event) => loadDocuments(event.dataTransfer.files));
 
 window.addEventListener("resize", () => {
-  if (state.pdf) renderPreview(state.selectedPage).catch(console.error);
+  if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
 });

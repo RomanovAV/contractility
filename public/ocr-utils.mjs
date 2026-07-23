@@ -89,6 +89,13 @@ export function resolveAdditionalPageRotation(viewport, rotationMode = "auto") {
   return requested;
 }
 
+export function createDocumentLabel(index) {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new TypeError("Document index must be a non-negative integer");
+  }
+  return index === 0 ? "Договор" : `Доп. соглашение ${index}`;
+}
+
 export function createOcrRenderPlan(
   viewport,
   requestedDpi,
@@ -116,10 +123,23 @@ export function createOcrRenderPlan(
 }
 
 export function createTextExport(documentResult) {
-  const sections = documentResult.pages.map((page) => [
-    `===== Страница ${page.number} =====`,
-    normalizeWhitespace(page.text),
-  ].join("\n"));
+  const documents = Array.isArray(documentResult?.documents)
+    ? documentResult.documents
+    : [{
+        label: "Договор",
+        file: { name: documentResult?.document?.name ?? "" },
+        pages: documentResult?.pages ?? [],
+      }];
+  const sections = documents.map((document) => {
+    const heading = document.file?.name
+      ? `######## ${document.label} · ${document.file.name} ########`
+      : `######## ${document.label} ########`;
+    const pages = (document.pages ?? []).map((page) => [
+      `===== Страница ${page.number} =====`,
+      normalizeWhitespace(page.text),
+    ].join("\n"));
+    return [heading, ...pages].join("\n\n");
+  });
   return `${sections.join("\n\n")}\n`;
 }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createDocumentLabel,
   createTextExport,
   createOcrRenderPlan,
   flattenOcrLines,
@@ -9,6 +10,13 @@ import {
   readPdfTextLayer,
   resolveAdditionalPageRotation,
 } from "../public/ocr-utils.mjs";
+
+test("createDocumentLabel assigns the first PDF to the contract", () => {
+  assert.equal(createDocumentLabel(0), "Договор");
+  assert.equal(createDocumentLabel(1), "Доп. соглашение 1");
+  assert.equal(createDocumentLabel(4), "Доп. соглашение 4");
+  assert.throws(() => createDocumentLabel(-1), /non-negative integer/);
+});
 
 test("normalizeWhitespace preserves paragraphs and removes noise", () => {
   assert.equal(normalizeWhitespace("  Первый   пункт \r\n\r\n\r\n Второй\tпункт  "), "Первый пункт\n\nВторой пункт");
@@ -132,4 +140,23 @@ test("createTextExport keeps page boundaries", () => {
   ] });
   assert.match(output, /===== Страница 1 =====\nПервая/);
   assert.match(output, /===== Страница 2 =====\nВторая/);
+});
+
+test("createTextExport keeps document roles and boundaries", () => {
+  const output = createTextExport({ documents: [
+    {
+      label: "Договор",
+      file: { name: "Договор.pdf" },
+      pages: [{ number: 1, text: "Основной текст" }],
+    },
+    {
+      label: "Доп. соглашение 1",
+      file: { name: "ДС-1.pdf" },
+      pages: [{ number: 1, text: "Изменения" }],
+    },
+  ] });
+  assert.match(output, /######## Договор · Договор\.pdf ########/);
+  assert.match(output, /Основной текст/);
+  assert.match(output, /######## Доп\. соглашение 1 · ДС-1\.pdf ########/);
+  assert.match(output, /Изменения/);
 });
