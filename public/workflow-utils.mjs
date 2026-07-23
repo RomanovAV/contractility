@@ -33,6 +33,15 @@ export function normalizeDocumentOrder(documents) {
   }));
 }
 
+export function mergeDocumentBatch(previousDocuments, pendingDocuments) {
+  const previousCount = previousDocuments.length;
+  const documents = normalizeDocumentOrder([...previousDocuments, ...pendingDocuments]);
+  return {
+    documents,
+    addedDocuments: documents.slice(previousCount),
+  };
+}
+
 export function moveHistoricalDocument(documents, index, direction) {
   if (!Array.isArray(documents) || index <= 0 || index >= documents.length) {
     return documents;

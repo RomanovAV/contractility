@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildFormationRequest,
   createFormationTextExport,
+  mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeDocumentOrder,
   validateDraftAgreementFile,
@@ -72,6 +73,20 @@ test("normalizeDocumentOrder keeps the contract first and relabels amendments", 
   assert.equal(normalized[0].label, "Исходный договор");
   assert.equal(normalized[1].role, "additional-agreement");
   assert.equal(normalized[1].label, "Подписанное доп. соглашение 1");
+});
+
+test("mergeDocumentBatch returns the normalized state objects as pending load targets", () => {
+  const existing = normalizeDocumentOrder([{ id: "base", pdf: { numPages: 1 } }]);
+  const pending = [{ id: "second", pdf: null }];
+  const batch = mergeDocumentBatch(existing, pending);
+
+  assert.equal(batch.documents.length, 2);
+  assert.equal(batch.addedDocuments.length, 1);
+  assert.equal(batch.addedDocuments[0], batch.documents[1]);
+  assert.notEqual(batch.addedDocuments[0], pending[0]);
+
+  batch.addedDocuments[0].pdf = { numPages: 3 };
+  assert.equal(batch.documents[1].pdf.numPages, 3);
 });
 
 test("moveHistoricalDocument reorders only signed amendments", () => {

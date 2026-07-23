@@ -13,8 +13,8 @@ import {
 import {
   buildFormationRequest,
   createFormationTextExport,
+  mergeDocumentBatch,
   moveHistoricalDocument,
-  normalizeDocumentOrder,
   validateDraftAgreementFile,
 } from "./workflow-utils.mjs";
 
@@ -386,7 +386,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
   const previousSelectedDocument = state.selectedDocument;
   const startIndex = previousDocuments.length;
   if (!append) destroyDocuments();
-  const addedDocuments = files.map((file, offset) => {
+  const pendingDocuments = files.map((file, offset) => {
     const index = startIndex + offset;
     return {
       id: `document-${index + 1}`,
@@ -400,7 +400,11 @@ async function loadDocuments(fileList, { append = false } = {}) {
       error: null,
     };
   });
-  state.documents = normalizeDocumentOrder([...previousDocuments, ...addedDocuments]);
+  const documentBatch = mergeDocumentBatch(previousDocuments, pendingDocuments);
+  state.documents = documentBatch.documents;
+  // Load PDF.js data into the normalized objects owned by state so the preview
+  // and OCR observe the loaded PDF rather than stale pre-normalization objects.
+  const { addedDocuments } = documentBatch;
   if (!append) clearResults();
   state.loading = true;
   elements["drop-zone"].hidden = true;
