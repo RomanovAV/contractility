@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -115,6 +116,8 @@ test("model verification fails closed when GigaCode omits or changes the model",
 test("runGigacode uses the requested model and strict one-shot flags", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-exec-"));
+  const events = [];
+  const transcriptDirectory = path.join(temporary, "transcripts");
   const result = await runGigacode({
     config: {
       command: process.execPath,
@@ -127,10 +130,35 @@ test("runGigacode uses the requested model and strict one-shot flags", async () 
     prompt: 'Return exactly {"status":"ok"} and no other text. Do not use tools.',
     cwd: temporary,
     session: "test",
+    transcriptDirectory,
+    onEvent(event, fields) {
+      events.push({ event, ...fields });
+    },
   });
   assert.equal(result.ok, true);
   assert.equal(result.output, '{"status":"ok"}');
   assert.deepEqual(result.reportedModels, ["smoke-model"]);
+  assert.equal(events.at(-1).event, "finished");
+  assert.equal(events.at(-1).model, "smoke-model");
+  assert.ok(events.filter((event) => event.event === "activity")
+    .every((event) => event.model === "smoke-model"));
+  const transcriptFiles = (await readdir(transcriptDirectory)).sort();
+  assert.deepEqual(transcriptFiles, [
+    "test.attempt-1.stderr.log",
+    "test.attempt-1.stdout.ndjson",
+    "test.attempt-1.summary.json",
+  ]);
+  assert.match(
+    await readFile(path.join(transcriptDirectory, "test.attempt-1.stdout.ndjson"), "utf8"),
+    /"type":"result"/,
+  );
+  const transcriptSummary = JSON.parse(await readFile(
+    path.join(transcriptDirectory, "test.attempt-1.summary.json"),
+    "utf8",
+  ));
+  assert.equal(transcriptSummary.model, "smoke-model");
+  assert.equal(transcriptSummary.ok, true);
+  assert.equal(transcriptSummary.transcriptLimited, false);
 });
 
 test("review parser rejects prose and accepts domain findings", () => {

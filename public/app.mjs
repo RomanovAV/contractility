@@ -33,8 +33,9 @@ const elements = Object.fromEntries(
     "download-preview", "download-text", "draft-drop-zone",
     "draft-file-input", "draft-summary",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
-    "file-summary", "finalize-run", "force-ocr", "formation-run-card", "next-page",
-    "ocr-overlay", "overlay-toggle",
+    "file-summary", "finalize-run", "force-ocr", "formation-run-card",
+    "gigacode-activity", "gigacode-activity-detail", "gigacode-activity-time",
+    "gigacode-activity-title", "next-page", "ocr-overlay", "overlay-toggle",
     "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
     "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail",
     "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
@@ -168,9 +169,12 @@ function updateFormationState() {
   elements["target-status-note"].className = "target-status-note";
   if (targetReady) {
     const reviewerCount = state.targetSession.target.models.reviewers.length;
+    const transcriptStatus = state.targetSession.target.retainAgentTranscripts
+      ? " · отладочные transcript-логи включены"
+      : "";
     elements["target-status-note"].classList.add("ready");
     elements["target-status-note"].textContent =
-      `Конфигурация GigaCode готова: producer, арбитр и ${reviewerCount} независимых рецензентов.`;
+      `Конфигурация GigaCode готова: producer, арбитр и ${reviewerCount} независимых рецензентов${transcriptStatus}.`;
   } else if (state.targetSessionError || state.targetSession?.target?.error) {
     elements["target-status-note"].classList.add("failed");
     elements["target-status-note"].textContent =
@@ -1153,6 +1157,53 @@ function reviewerTitle(id) {
   return reviewerLabels[id] ?? id;
 }
 
+function gigacodeSessionLabel(session) {
+  if (session === "producer") return "Формирование кандидата";
+  if (session?.startsWith("synthesis:")) return "Арбитр";
+  if (session?.startsWith("review-format:")) return "Исправление формата reviewer";
+  if (session?.startsWith("review:")) {
+    const reviewerId = session.split(":").slice(2).join(":");
+    return reviewerTitle(reviewerId);
+  }
+  return session || "GigaCode";
+}
+
+function renderGigacodeStatus(status) {
+  const container = elements["gigacode-activity"];
+  container.className = "gigacode-activity";
+  if (!status) {
+    elements["gigacode-activity-title"].textContent = "Ожидается первый запрос к GigaCode";
+    elements["gigacode-activity-detail"].textContent =
+      "Статус обновляется автоматически раз в секунду.";
+    elements["gigacode-activity-time"].textContent = "";
+    return;
+  }
+
+  const phaseLabels = {
+    prepared: "Запрос подготовлен",
+    started: "GigaCode начал формировать ответ",
+    activity: status.source === "stderr"
+      ? "Получено служебное сообщение"
+      : "Получен новый фрагмент ответа",
+    finished: status.ok ? "Ответ GigaCode получен" : "Ответ завершился с ошибкой",
+  };
+  const active = ["prepared", "started", "activity"].includes(status.phase);
+  container.classList.add(active ? "active" : status.ok === false ? "failed" : "good");
+  elements["gigacode-activity-title"].textContent =
+    phaseLabels[status.phase] ?? `Событие GigaCode: ${status.phase}`;
+  const details = [
+    gigacodeSessionLabel(status.session),
+    status.model,
+    status.outputChars != null ? `${status.outputChars} симв.` : null,
+    status.durationMs != null ? `${Math.round(status.durationMs / 100) / 10} с` : null,
+  ].filter(Boolean);
+  elements["gigacode-activity-detail"].textContent = details.join(" · ");
+  const at = status.at ? new Date(status.at) : null;
+  elements["gigacode-activity-time"].textContent =
+    at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("ru-RU") : "";
+  elements["gigacode-activity-time"].dateTime = status.at ?? "";
+}
+
 function renderReviewers(run) {
   elements["reviewers-grid"].replaceChildren();
   const reports = new Map((run?.reviews ?? []).map((report) => [report.reviewer.id, report]));
@@ -1221,6 +1272,7 @@ function renderFormationRun(job) {
     : "Отчёты появятся после формирования кандидата.";
   renderRunStages(runState);
   renderReviewers(run);
+  renderGigacodeStatus(run?.gigacodeStatus ?? null);
 
   elements["consensus-panel"].hidden = !run?.consensus;
   elements["consensus-summary"].textContent = run?.consensus?.summary ?? "";
@@ -1300,6 +1352,7 @@ async function launchFormation() {
   setRunBlocker("");
   renderRunStages(null);
   renderReviewers(null);
+  renderGigacodeStatus(null);
   setRunStatus("Загрузка входов", "Создаётся локальный защищённый case bundle.");
   updateFormationState();
   setRunning(false);

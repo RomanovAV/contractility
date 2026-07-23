@@ -88,6 +88,12 @@ export function validateTargetConfig(config, { allowPlaceholders = false } = {})
   if (!config.storage?.runRoot || typeof config.storage.runRoot !== "string") {
     throw new TypeError("storage.runRoot обязателен.");
   }
+  if (
+    config.storage.retainAgentTranscripts != null
+    && typeof config.storage.retainAgentTranscripts !== "boolean"
+  ) {
+    throw new TypeError("storage.retainAgentTranscripts должен быть boolean.");
+  }
 }
 
 export function requestedModels(config) {

@@ -167,10 +167,23 @@ test("workflow API protects mutations and prepares a verified local case", async
       findingsSha256: "f".repeat(64),
     };
     await writeFile(path.join(runDirectory, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
-    await writeFile(path.join(runDirectory, "events.ndjson"), `${JSON.stringify({
-      event: "state",
-      status: state.status,
-    })}\n`);
+    await writeFile(path.join(runDirectory, "events.ndjson"), [
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "state",
+        status: state.status,
+      }),
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "gigacode.finished",
+        session: "synthesis:1",
+        model: "synthesizer-model",
+        ok: true,
+        durationMs: 1200,
+        outputChars: 240,
+      }),
+      "",
+    ].join("\n"));
     await onRunCreated({ runId, runDirectory });
     return { runId, runDirectory, state };
   };
@@ -346,6 +359,9 @@ test("workflow API protects mutations and prepares a verified local case", async
   assert.equal(job.run.state.status, "awaiting-human-approval");
   assert.equal(job.run.reviews[0].verdict, "pass");
   assert.equal(job.run.consensus.status, "done");
+  assert.equal(job.run.gigacodeStatus.phase, "finished");
+  assert.equal(job.run.gigacodeStatus.model, "synthesizer-model");
+  assert.equal(job.run.gigacodeStatus.outputChars, 240);
 
   const approveResponse = await fetch(
     `${origin}/api/workflow/runs/${job.runId}/approve`,

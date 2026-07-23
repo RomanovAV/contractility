@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const APPROVAL_UNAVAILABLE =
@@ -16,6 +19,7 @@ const TRANSIENT_PATTERNS = [
   "Rate limit exceeded",
 ];
 const MAX_CAPTURE_CHARS = 2_000_000;
+const MAX_TRANSCRIPT_BYTES = 2_000_000;
 const activeChildren = new Set();
 
 function allowedEnvironment(extraNames = []) {
@@ -111,6 +115,76 @@ function terminateProcess(child, reason) {
   return reason;
 }
 
+function safeTranscriptName(value) {
+  const normalized = String(value ?? "gigacode")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  return normalized || "gigacode";
+}
+
+async function createTranscriptWriters(directory, session, attempt) {
+  if (!directory) return null;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700).catch(() => {});
+  const base = `${safeTranscriptName(session)}.attempt-${attempt}`;
+  const stdoutPath = path.join(directory, `${base}.stdout.ndjson`);
+  const stderrPath = path.join(directory, `${base}.stderr.log`);
+  const summaryPath = path.join(directory, `${base}.summary.json`);
+  const stdout = createWriteStream(stdoutPath, { flags: "wx", mode: 0o600 });
+  const stderr = createWriteStream(stderrPath, { flags: "wx", mode: 0o600 });
+  const stdoutDone = new Promise((resolve, reject) => {
+    stdout.once("finish", resolve);
+    stdout.once("error", reject);
+  });
+  const stderrDone = new Promise((resolve, reject) => {
+    stderr.once("finish", resolve);
+    stderr.once("error", reject);
+  });
+  return {
+    base,
+    stdout,
+    stderr,
+    stdoutDone,
+    stderrDone,
+    stdoutPath,
+    stderrPath,
+    summaryPath,
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    limited: false,
+  };
+}
+
+function writeTranscriptChunk(transcript, streamName, chunk) {
+  if (!transcript) return;
+  const byteField = streamName === "stdout" ? "stdoutBytes" : "stderrBytes";
+  const stream = transcript[streamName];
+  const remaining = MAX_TRANSCRIPT_BYTES - transcript[byteField];
+  if (remaining <= 0) {
+    transcript.limited = true;
+    return;
+  }
+  const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  const retained = buffer.length > remaining ? buffer.subarray(0, remaining) : buffer;
+  stream.write(retained);
+  transcript[byteField] += retained.length;
+  if (retained.length < buffer.length) transcript.limited = true;
+}
+
+async function writeTranscriptSummary(transcript, value) {
+  if (!transcript) return;
+  await writeFile(transcript.summaryPath, `${JSON.stringify({
+    schemaVersion: "contractility.gigacode-transcript.v1",
+    ...value,
+    stdoutFile: path.basename(transcript.stdoutPath),
+    stderrFile: path.basename(transcript.stderrPath),
+  }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
 async function runOnce({
   config,
   model,
@@ -118,6 +192,8 @@ async function runOnce({
   cwd,
   session,
   onEvent = () => {},
+  transcriptDirectory = null,
+  attempt = 1,
 }) {
   const args = [
     ...(config.commandArgs ?? []),
@@ -138,6 +214,12 @@ async function runOnce({
     promptChars: prompt.length,
   });
   const started = Date.now();
+  const startedAt = new Date().toISOString();
+  const transcript = await createTranscriptWriters(
+    transcriptDirectory,
+    session,
+    attempt,
+  );
   const child = spawn(config.command, args, {
     cwd,
     env: allowedEnvironment(config.passEnvironment),
@@ -181,21 +263,48 @@ async function runOnce({
   };
   child.stdout.on("data", (chunk) => {
     stdout = append(stdout, chunk);
-    onEvent("activity", { session, source: "stdout" });
+    writeTranscriptChunk(transcript, "stdout", chunk);
+    onEvent("activity", { session, model, source: "stdout" });
   });
   child.stderr.on("data", (chunk) => {
     stderr = append(stderr, chunk);
-    onEvent("activity", { session, source: "stderr" });
+    writeTranscriptChunk(transcript, "stderr", chunk);
+    onEvent("activity", { session, model, source: "stderr" });
   });
 
-  const result = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolve({ code, signal }));
-  }).finally(() => {
+  let result;
+  let executionError = null;
+  try {
+    result = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+  } catch (error) {
+    executionError = error;
+  } finally {
     activeChildren.delete(child);
     clearTimeout(sessionTimer);
     clearTimeout(idleTimer);
-  });
+    if (transcript) {
+      transcript.stdout.end();
+      transcript.stderr.end();
+      await Promise.all([transcript.stdoutDone, transcript.stderrDone]);
+    }
+  }
+  if (executionError) {
+    await writeTranscriptSummary(transcript, {
+      session,
+      model,
+      attempt,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      ok: false,
+      error: executionError.message ?? String(executionError),
+      transcriptLimited: transcript?.limited ?? false,
+      durationMs: Date.now() - started,
+    });
+    throw executionError;
+  }
 
   const decoded = decodeStreamJson(stdout);
   const combined = `${decoded.output}\n${stderr}`;
@@ -230,6 +339,22 @@ async function runOnce({
     durationMs: response.durationMs,
     outputChars: response.output.length,
   });
+  await writeTranscriptSummary(transcript, {
+      session,
+      model,
+      attempt,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      ok: response.ok,
+      returnCode: response.returnCode,
+      signal: response.signal,
+      timedOut: response.timedOut,
+      idleTimedOut: response.idleTimedOut,
+      outputLimited: response.outputLimited,
+      transcriptLimited: transcript?.limited ?? false,
+      durationMs: response.durationMs,
+      outputChars: response.output.length,
+    });
   return response;
 }
 
@@ -237,7 +362,7 @@ export async function runGigacode(options) {
   const retries = options.config.retryCount ?? 1;
   let last;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    last = await runOnce(options);
+    last = await runOnce({ ...options, attempt: attempt + 1 });
     last.attempt = attempt + 1;
     if (last.ok || last.approvalUnavailable || !last.transient || attempt === retries) {
       return last;

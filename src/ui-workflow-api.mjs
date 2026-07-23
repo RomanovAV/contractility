@@ -212,6 +212,47 @@ async function readCurrentRound(runDirectory, state) {
   return { reviews, consensus };
 }
 
+async function readLastGigacodeStatus(runDirectory) {
+  const eventPath = path.join(runDirectory, "events.ndjson");
+  let content;
+  try {
+    const info = await stat(eventPath);
+    const length = Math.min(info.size, 128 * 1024);
+    const handle = await open(eventPath, "r");
+    const buffer = Buffer.alloc(length);
+    let bytesRead = 0;
+    try {
+      ({ bytesRead } = await handle.read(buffer, 0, length, Math.max(0, info.size - length)));
+    } finally {
+      await handle.close();
+    }
+    content = buffer.subarray(0, bytesRead).toString("utf8");
+  } catch {
+    return null;
+  }
+  const lines = content.split("\n").filter(Boolean).reverse();
+  for (const line of lines) {
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!String(event.event ?? "").startsWith("gigacode.")) continue;
+    return {
+      at: event.at ?? null,
+      phase: event.event.slice("gigacode.".length),
+      session: event.session ?? null,
+      model: event.model ?? null,
+      source: event.source ?? null,
+      ok: typeof event.ok === "boolean" ? event.ok : null,
+      durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null,
+      outputChars: Number.isFinite(event.outputChars) ? event.outputChars : null,
+    };
+  }
+  return null;
+}
+
 async function readRunSummary(runDirectory) {
   const state = await readJson(path.join(runDirectory, "state.json"));
   const round = await readCurrentRound(runDirectory, state);
@@ -219,6 +260,7 @@ async function readRunSummary(runDirectory) {
     state,
     stateLabel: stateLabel(state.status),
     ...round,
+    gigacodeStatus: await readLastGigacodeStatus(runDirectory),
   };
 }
 
@@ -270,6 +312,7 @@ export function createUiWorkflowApi({
           synthesizer: config.models.synthesizer,
           reviewers: config.models.reviewers.map(({ id, model, focus }) => ({ id, model, focus })),
         },
+        retainAgentTranscripts: config.storage.retainAgentTranscripts,
       };
     } catch (error) {
       return { ready: false, error: error.message };

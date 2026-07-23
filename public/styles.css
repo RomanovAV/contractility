@@ -193,6 +193,20 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .run-status-badge { flex: 0 0 auto; padding: 8px 11px; border-radius: 999px; background: var(--amber-soft); color: var(--amber); font-size: 10px; font-weight: 800; }
 .run-status-badge.good { background: var(--accent-soft); color: var(--accent); }
 .run-status-badge.failed { background: #fce8e5; color: var(--danger); }
+.gigacode-activity { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; margin-top: 18px; padding: 12px 14px; border: 1px solid #d8e2de; border-radius: 12px; background: #f8faf9; }
+.activity-dot { width: 9px; height: 9px; border-radius: 50%; background: #9ba6a1; box-shadow: 0 0 0 4px rgba(115, 129, 122, 0.1); }
+.gigacode-activity.active .activity-dot { background: #d08a2f; box-shadow: 0 0 0 4px rgba(208, 138, 47, 0.13); animation: activity-pulse 1.4s ease-in-out infinite; }
+.gigacode-activity.good .activity-dot { background: #22a879; box-shadow: 0 0 0 4px rgba(34, 168, 121, 0.12); }
+.gigacode-activity.failed .activity-dot { background: var(--danger); box-shadow: 0 0 0 4px rgba(164, 54, 45, 0.1); }
+.gigacode-activity > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gigacode-activity strong, .gigacode-activity span, .gigacode-activity time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gigacode-activity strong { font-size: 10px; }
+.gigacode-activity > div > span, .gigacode-activity time { color: var(--muted); font-size: 9px; }
+.gigacode-activity time { font-family: "SFMono-Regular", Consolas, monospace; }
+@keyframes activity-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
 .run-stages { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin: 24px 0; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--line); list-style: none; }
 .run-stages li { min-width: 0; display: grid; grid-template-columns: 30px 1fr; gap: 2px 8px; align-content: center; min-height: 78px; padding: 12px; background: #fbfcfb; color: #8a948f; }
 .run-stages li > span { grid-row: 1 / 3; width: 30px; height: 30px; display: grid; place-items: center; align-self: center; border-radius: 9px; background: #edf0ee; font-size: 9px; font-weight: 850; }
@@ -278,6 +292,8 @@ footer { padding: 26px 24px 38px; color: #829089; text-align: center; font-size:
   .documents-list { max-height: 190px; }
   .viewer-stage { min-height: 420px; }
   .formation-run-card { padding: 20px; }
+  .gigacode-activity { grid-template-columns: auto 1fr; }
+  .gigacode-activity time { grid-column: 2; }
   .run-stages, .reviewers-grid { grid-template-columns: 1fr; }
   .run-actions { align-items: stretch; flex-direction: column; }
   .run-actions > button { width: 100%; }

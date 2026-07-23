@@ -82,7 +82,7 @@
           </label>
           <label class="check-setting">
             <input id="force-ocr" type="checkbox">
-            <span><strong>Всегда запускать OCR</strong><small>Даже если в PDF уже найден текстовый слой</small></span>
+            <span><strong>Всегда запускать OCR</strong><small>Игнорировать встроенный текст PDF и распознавать изображение каждой страницы. Медленнее; включайте при ошибочном текстовом слое.</small></span>
           </label>
           <label>
             <span>Поворот страниц</span>
@@ -172,6 +172,15 @@
             <p id="run-detail">Подготавливается защищённый локальный запуск.</p>
           </div>
           <span id="run-status-badge" class="run-status-badge">Подготовка</span>
+        </div>
+
+        <div id="gigacode-activity" class="gigacode-activity">
+          <span class="activity-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="gigacode-activity-title">Ожидается первый запрос к GigaCode</strong>
+            <span id="gigacode-activity-detail">Статус обновляется автоматически раз в секунду.</span>
+          </div>
+          <time id="gigacode-activity-time"></time>
         </div>
 
         <ol id="run-stages" class="run-stages" aria-label="Этапы формирования">

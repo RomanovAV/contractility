@@ -82,6 +82,12 @@ function eventRecorder(runDirectory) {
   };
 }
 
+function transcriptDirectory(config, runDirectory) {
+  return config.storage.retainAgentTranscripts
+    ? path.join(runDirectory, "transcripts")
+    : null;
+}
+
 async function requireProducerArtifacts(roundDirectory) {
   const currentContract = path.join(roundDirectory, "artifacts/current-contract.md");
   const changeRegister = path.join(roundDirectory, "artifacts/change-register.json");
@@ -198,6 +204,7 @@ async function runReviewer({
     cwd: runDirectory,
     session: `review:${round}:${reviewer.id}`,
     onEvent: eventRecorder(runDirectory),
+    transcriptDirectory: transcriptDirectory(config, runDirectory),
   });
   if (!result.ok) {
     throw new Error(`Reviewer ${reviewer.id} завершился с ошибкой: ${result.stderr || result.output}`);
@@ -220,6 +227,7 @@ async function runReviewer({
         cwd: runDirectory,
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
         onEvent: eventRecorder(runDirectory),
+        transcriptDirectory: transcriptDirectory(config, runDirectory),
       });
       if (!result.ok) break;
       assertRequestedModel(result, reviewer.model);
@@ -283,6 +291,7 @@ Untrusted findings: rounds/${String(round).padStart(2, "0")}/untrusted-findings.
     cwd: runDirectory,
     session: `synthesis:${round}`,
     onEvent: eventRecorder(runDirectory),
+    transcriptDirectory: transcriptDirectory(config, runDirectory),
   });
   if (!result.ok) {
     throw new Error(`Арбитр завершился с ошибкой: ${result.stderr || result.output}`);
@@ -370,6 +379,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       cwd: runDirectory,
       session: "producer",
       onEvent: eventRecorder(runDirectory),
+      transcriptDirectory: transcriptDirectory(config, runDirectory),
     });
     if (!producerResult.ok) {
       throw new Error(`Producer завершился с ошибкой: ${producerResult.stderr || producerResult.output}`);
