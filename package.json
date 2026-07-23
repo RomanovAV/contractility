@@ -8,7 +8,6 @@
     "doctor": "node scripts/doctor.mjs",
     "doctor:target": "node src/cli.mjs doctor",
     "target": "node src/cli.mjs",
-    "bundle:target": "node scripts/build-target-bundle.mjs",
     "diagnostics": "node src/server.mjs",
     "vendor": "node scripts/vendor-assets.mjs",
     "start": "node src/server.mjs",

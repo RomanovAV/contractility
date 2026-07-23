@@ -4,6 +4,5 @@ tmp/
 data/jobs/
 data/cases/
 data/runs/
-dist/
 *.log
 /testdata
