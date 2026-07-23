@@ -10,9 +10,7 @@
   (замените его на разрешённый каталог, доступный текущему пользователю);
 - `/secure/incoming` — каталог с договором, подписанными дополнительными
   соглашениями, новой редакцией DOCX и экспортом из браузера;
-- `CASE_ID` и `RUN_ID` — идентификаторы из вывода соответствующих команд;
-- `document-1`, `document-2` и далее — идентификаторы документов из
-  `inputs.signedDocuments` файла `*.formation-request.json`.
+- `RUN_ID` — идентификатор запуска, показанный в интерфейсе.
 
 Не используйте тестовые документы с персональными или коммерческими данными,
 если передача их содержимого настроенным моделям GigaCode не разрешена
@@ -90,7 +88,7 @@ npm run doctor:target -- --config config/target.json --smoke
 
 Ожидаемый результат: все строки начинаются с `✓`, включая каждую модель.
 
-## 4. Автоматические тесты и локальный OCR
+## 4. Автоматические тесты и запуск локального UI
 
 ```bash
 npm test
@@ -112,169 +110,75 @@ http://127.0.0.1:4317
 3. отдельно выберите новую редакцию дополнительного соглашения DOCX;
 4. дождитесь завершения OCR всех страниц;
 5. проверьте порядок документов и исправьте существенные ошибки OCR;
-6. скачайте `*.formation-request.json`.
+6. убедитесь, что под результатом OCR появилась зелёная строка
+   «Конфигурация GigaCode готова»;
+7. при необходимости скачайте `*.formation-request.json` как резервную копию;
+8. нажмите «Запустить формирование».
 
-Остановить локальный сервер после экспорта можно сочетанием `Ctrl+C`.
+С этого момента исходные документы блокируются от изменения. UI сам:
 
-## 5. Подготовка неизменяемого case bundle
+- передаёт файлы только локальному серверу `127.0.0.1`;
+- повторно сверяет SHA-256 и создаёт case;
+- запускает producer;
+- показывает текущий раунд и пять параллельных reviewer-ролей;
+- отображает замечания и решение synthesis-арбитра;
+- повторяет review после подтверждённых исправлений.
 
-Сначала посмотрите идентификаторы и имена документов в запросе:
+## 5. Контроль автоматического результата
 
-```bash
-node -e '
-const fs = require("fs");
-const request = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-for (const item of request.inputs.signedDocuments) {
-  console.log(`${item.id}\t${item.role}\t${item.file.name}`);
-}
-' /secure/incoming/contract.formation-request.json
-```
+Дождитесь одного из состояний:
 
-Передайте ровно один `--source ID=PATH` для каждого PDF. Первый источник —
-исходный договор, следующие — подписанные дополнительные соглашения:
+- «Нужна проверка» — кандидат прошёл автоматический контур;
+- «Требуется решение» — пайплайн остановлен на неоднозначности или повторяющемся
+  наборе замечаний;
+- «Ошибка» — техническая ошибка GigaCode или локального инструмента.
 
-```bash
-npm run target -- prepare \
-  --request /secure/incoming/contract.formation-request.json \
-  --draft /secure/incoming/new-edition.docx \
-  --source document-1=/secure/incoming/contract.pdf \
-  --source document-2=/secure/incoming/agreement-1.pdf \
-  --source document-3=/secure/incoming/agreement-2.pdf \
-  --out data/cases
-```
+При «Требуется решение» и «Ошибка» подтверждение и финализация заблокированы.
+Не запускайте процесс заново, пока не сохранена причина остановки.
 
-Добавьте или уберите строки `--source` в соответствии с фактическим комплектом.
-Команда повторно проверит SHA-256 всех PDF и DOCX. Из вывода сохраните
-`caseDirectory`, например:
+При состоянии «Нужна проверка»:
 
-```text
-/opt/contractility/data/cases/case-0123456789abcdef0123
-```
+1. просмотрите карточки всех рецензентов и решение арбитра;
+2. скачайте «Кандидат DOCX»;
+3. скачайте «Превью PDF»;
+4. сопоставьте кандидат с подписанными PDF;
+5. проверьте даты, стороны, реквизиты, номера пунктов, таблицы, сноски,
+   колонтитулы и нумерацию страниц;
+6. укажите ФИО проверяющего;
+7. нажмите «Подтвердить хеши».
 
-Задайте его для следующих команд:
+Подтверждение фиксирует SHA-256 кандидата и набора замечаний, но не является
+электронной подписью.
 
-```bash
-CASE_DIR="/opt/contractility/data/cases/CASE_ID"
-test -f "$CASE_DIR/case-manifest.json"
-```
+## 6. Финализация
 
-## 6. Полный запуск с циклическим межмодельным ревью
+После подтверждения нажмите «Финализировать», затем
+«Скачать финальный DOCX».
 
-```bash
-npm run target -- run \
-  --case "$CASE_DIR" \
-  --config config/target.json
-```
-
-Команда может выполнить несколько раундов. В каждом раунде пять read-only
-рецензентов работают параллельно, затем synthesizer проверяет замечания,
-вносит подтверждённые исправления и запускает новый полный раунд ревью.
-
-Из вывода сохраните `runDirectory`, например:
-
-```text
-/opt/contractility/data/runs/run-20260723123456-0123abcd
-```
+Для независимой проверки результата найдите `RUN_ID`, показанный в UI:
 
 ```bash
 RUN_DIR="/opt/contractility/data/runs/RUN_ID"
 npm run target -- status --run "$RUN_DIR"
-```
-
-Допустимые результаты автоматической стадии:
-
-- `awaiting-human-approval` — кандидат прошёл автоматическое ревью;
-- `blocked` — требуется разбор причины из `state.json` и `consensus.json`;
-- `failed` — техническая ошибка, указанная в `state.json`.
-
-Состояния `blocked` и `failed` нельзя подтверждать или финализировать.
-
-## 7. Ручная проверка результата ревью
-
-```bash
-cat "$RUN_DIR/state.json"
-cat "$RUN_DIR/events.ndjson"
-find "$RUN_DIR/rounds" -path '*/reviews/*.json' -print
-find "$RUN_DIR/rounds" -name consensus.json -print
-```
-
-Просмотрите:
-
-- `rounds/NN/reviews/*.json` — замечания всех пяти рецензентов;
-- `rounds/NN/consensus.json` — решение арбитра;
-- `rounds/NN/artifacts/current-contract.md` — восстановленную действующую
-  редакцию договора;
-- `rounds/NN/artifacts/change-register.json` — реестр применённых изменений;
-- путь `candidatePath` из `state.json` — DOCX-кандидат, прошедший последний
-  раунд.
-
-Для дополнительной визуальной проверки отрисуйте кандидат в PDF:
-
-```bash
-CANDIDATE_REL="$(
-  node -e \
-    'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).candidatePath)' \
-    "$RUN_DIR/state.json"
-)"
-mkdir -p "$RUN_DIR/manual-render"
-soffice --headless \
-  --convert-to pdf \
-  --outdir "$RUN_DIR/manual-render" \
-  "$RUN_DIR/$CANDIDATE_REL"
-find "$RUN_DIR/manual-render" -maxdepth 1 -type f -name '*.pdf' -print
-```
-
-До подтверждения вручную сопоставьте финальный текст с подписанными PDF,
-проверьте даты, стороны, реквизиты, номера пунктов, таблицы, сноски,
-колонтитулы, нумерацию страниц и все замечания рецензентов.
-
-## 8. Подтверждение проверенных хешей
-
-Выполняйте этот шаг только при состоянии `awaiting-human-approval`.
-
-```bash
-CANDIDATE_SHA="$(
-  node -e \
-    'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).candidateSha256)' \
-    "$RUN_DIR/state.json"
-)"
-FINDINGS_SHA="$(
-  node -e \
-    'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).findingsSha256)' \
-    "$RUN_DIR/state.json"
-)"
-
-printf 'Candidate SHA-256: %s\nFindings SHA-256: %s\n' \
-  "$CANDIDATE_SHA" "$FINDINGS_SHA"
-
-npm run target -- approve \
-  --run "$RUN_DIR" \
-  --candidate-sha256 "$CANDIDATE_SHA" \
-  --findings-sha256 "$FINDINGS_SHA" \
-  --approver "ФИО проверяющего"
-```
-
-Файл `approval/approval.json` фиксирует аудиторское подтверждение процесса,
-но не является электронной подписью документа.
-
-## 9. Финализация и итоговая проверка
-
-```bash
-npm run target -- finalize --run "$RUN_DIR"
 npm run target -- verify --run "$RUN_DIR"
-
 cat "$RUN_DIR/final/final-manifest.json"
-shasum -a 256 "$RUN_DIR/final/final-additional-agreement.docx"
 ```
 
-Итоговый файл:
+`verify` должен вернуть `"ok": true`. SHA-256 в `final-manifest.json` должен
+совпадать с итоговым DOCX.
 
-```text
-$RUN_DIR/final/final-additional-agreement.docx
+Остановить локальный сервер после завершения можно сочетанием `Ctrl+C`.
+
+## 7. Резервный CLI-сценарий
+
+Если UI недоступен, те же операции остаются доступны через:
+
+```bash
+npm run target -- help
 ```
 
-`verify` должен вернуть `"ok": true`, а SHA-256 файла должен совпасть со
-значением `sha256` в `final/final-manifest.json`.
+CLI следует использовать как резервный интерфейс или для диагностики; штатный
+приёмочный прогон выполняется через браузер.
 
 ## Критерии успешного полноценного теста
 
@@ -282,14 +186,14 @@ $RUN_DIR/final/final-additional-agreement.docx
 - `doctor:target --smoke` подтвердил GigaCode CLI и все выбранные модели;
 - `npm test` завершился без ошибок;
 - browser OCR обработал весь комплект и сформировал formation request;
-- `prepare` повторно подтвердил SHA-256 всех исходных файлов;
+- UI повторно передал файлы localhost-серверу и подтвердил их SHA-256;
 - producer создал кандидат и обязательные артефакты;
 - все пять reviewer-ролей создали отчёты хотя бы в одном раунде;
 - synthesis-арбитр сформировал `consensus.json`;
-- запуск дошёл до `awaiting-human-approval`;
-- человек просмотрел кандидат и подтвердил точные хеши;
-- `finalize` создал финальный DOCX и манифест;
-- `verify` вернул `"ok": true`;
+- UI дошёл до состояния «Нужна проверка»;
+- человек скачал DOCX/PDF, просмотрел кандидат и подтвердил точные хеши;
+- UI финализировал документ и позволил скачать итоговый DOCX;
+- резервная команда `verify` вернула `"ok": true`;
 - финальный DOCX визуально проверен после конвертации в PDF.
 
 ## Что сохранить для аудита

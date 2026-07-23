@@ -16,7 +16,7 @@
           <small>локальная обработка договоров</small>
         </span>
       </a>
-      <div class="offline-badge"><span></span> Без отправки файлов в сеть</div>
+      <div class="offline-badge"><span></span> Локальный интерфейс</div>
     </header>
 
     <main>
@@ -151,17 +151,74 @@
       </section>
 
       <section id="export-card" class="export-card" hidden>
-        <div><p class="eyebrow">Следующий этап</p><h2>Пакет для формирования допсоглашения</h2><p id="formation-status">Завершите OCR и загрузите новую редакцию DOCX.</p></div>
+        <div>
+          <p class="eyebrow">Следующий этап</p>
+          <h2>Сформировать и проверить допсоглашение</h2>
+          <p id="formation-status">Завершите OCR и загрузите новую редакцию DOCX.</p>
+          <p id="target-status-note" class="target-status-note">Проверяется готовность GigaCode…</p>
+        </div>
         <div class="export-actions">
-          <button id="download-json" class="primary-button" type="button" disabled>Скачать пакет JSON</button>
+          <button id="start-formation" class="primary-button" type="button" disabled>Запустить формирование</button>
+          <button id="download-json" class="secondary-button" type="button" disabled>Скачать пакет JSON</button>
           <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
         </div>
+      </section>
+
+      <section id="formation-run-card" class="formation-run-card" aria-live="polite" hidden>
+        <div class="run-heading">
+          <div>
+            <p class="eyebrow">Автоматический контур</p>
+            <h2>Формирование и межмодельное ревью</h2>
+            <p id="run-detail">Подготавливается защищённый локальный запуск.</p>
+          </div>
+          <span id="run-status-badge" class="run-status-badge">Подготовка</span>
+        </div>
+
+        <ol id="run-stages" class="run-stages" aria-label="Этапы формирования">
+          <li data-run-stage="inputs"><span>01</span><strong>Проверка входов</strong><small>PDF, DOCX и SHA-256</small></li>
+          <li data-run-stage="candidate"><span>02</span><strong>Кандидат</strong><small>Реконструкция договора</small></li>
+          <li data-run-stage="review"><span>03</span><strong>Пять рецензентов</strong><small>Параллельное ревью</small></li>
+          <li data-run-stage="approval"><span>04</span><strong>Подтверждение</strong><small>Проверка человеком</small></li>
+          <li data-run-stage="final"><span>05</span><strong>Финал</strong><small>Проверенный DOCX</small></li>
+        </ol>
+
+        <div class="review-section">
+          <div class="review-heading">
+            <div>
+              <h3>Независимые рецензенты</h3>
+              <p id="review-round-label">Отчёты появятся после формирования кандидата.</p>
+            </div>
+            <span id="run-id-label"></span>
+          </div>
+          <div id="reviewers-grid" class="reviewers-grid"></div>
+        </div>
+
+        <div id="consensus-panel" class="consensus-panel" hidden>
+          <strong>Решение арбитра</strong>
+          <p id="consensus-summary"></p>
+        </div>
+
+        <div id="run-blocker" class="run-blocker" role="alert" hidden></div>
+
+        <div class="run-actions">
+          <button id="download-candidate" class="secondary-button" type="button" disabled>Скачать кандидат DOCX</button>
+          <button id="download-preview" class="secondary-button" type="button" disabled>Скачать превью PDF</button>
+          <label class="approver-field">
+            <span>Проверяющий</span>
+            <input id="approver-name" type="text" autocomplete="name" placeholder="ФИО проверяющего" disabled>
+          </label>
+          <button id="approve-candidate" class="primary-button" type="button" disabled>Подтвердить хеши</button>
+          <button id="finalize-run" class="primary-button" type="button" disabled>Финализировать</button>
+          <button id="download-final" class="primary-button" type="button" disabled>Скачать финальный DOCX</button>
+        </div>
+        <p class="approval-notice">Подтверждение фиксирует проверенные SHA-256 кандидата и замечаний, но не заменяет электронную подпись.</p>
+        <p class="model-boundary">Семантическая стадия передаёт содержимое настроенным моделям GigaCode. Допустимость этого контура должна быть подтверждена политикой организации.</p>
       </section>
 
       <div id="error-banner" class="error-banner" role="alert" hidden></div>
     </main>
 
-    <footer>Contractility MVP · Подписанные PDF и новая редакция DOCX остаются на этом компьютере</footer>
+    <footer>Contractility MVP · OCR выполняется локально · GigaCode используется согласно конфигурации целевого контура</footer>
     <script type="module" src="/app.mjs"></script>
   </body>
 </html>

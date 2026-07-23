@@ -3,6 +3,8 @@ import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { terminateActiveGigacode } from "./target/gigacode.mjs";
+import { createUiWorkflowApi } from "./ui-workflow-api.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(projectRoot, "public");
@@ -115,7 +117,11 @@ async function serveStatic(request, response, pathname) {
   createReadStream(filePath).pipe(response);
 }
 
-export function createAppServer() {
+export function createAppServer({ workflowOptions = {} } = {}) {
+  const workflowApi = createUiWorkflowApi({
+    securityHeaders: SECURITY_HEADERS,
+    ...workflowOptions,
+  });
   return http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -128,6 +134,8 @@ export function createAppServer() {
         });
         return;
       }
+
+      if (await workflowApi.handle(request, response, url)) return;
 
       if (request.method !== "GET" && request.method !== "HEAD") {
         sendJson(response, 405, { error: "Метод не поддерживается" });
@@ -146,8 +154,12 @@ export function createAppServer() {
   });
 }
 
-export async function startServer({ port = 4317, host = "127.0.0.1" } = {}) {
-  const server = createAppServer();
+export async function startServer({
+  port = 4317,
+  host = "127.0.0.1",
+  workflowOptions = {},
+} = {}) {
+  const server = createAppServer({ workflowOptions });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, resolve);
@@ -165,6 +177,7 @@ if (isEntryPoint) {
   console.log(`Contractility запущен: http://127.0.0.1:${port}`);
 
   const stop = () => {
+    terminateActiveGigacode("local server shutdown");
     server.close(() => process.exit(0));
   };
   process.once("SIGINT", stop);

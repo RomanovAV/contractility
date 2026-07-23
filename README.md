@@ -126,10 +126,10 @@ Target CLI исполняет `contractility.formation-request.v1`, сохран
 
 ## Запуск семантического контура на целевой машине
 
-В репозитории есть отдельный target CLI, рассчитанный на Node.js 22+, GigaCode
-CLI, `zip`/`unzip` и, для обязательного визуального прогона, LibreOffice
-`soffice`. На целевой машине не выполняется `npm install`: все runtime-файлы
-приложения уже находятся в комплекте.
+Локальный сервер объединяет браузерный OCR и target-контур, рассчитанный на
+Node.js 22+, GigaCode CLI, `zip`/`unzip` и LibreOffice `soffice`. На целевой
+машине не выполняется `npm install`: все runtime-файлы приложения уже находятся
+в репозитории.
 
 1. Скопируйте конфигурацию и укажите реальные идентификаторы доступных моделей:
 
@@ -144,50 +144,41 @@ cp config/target.example.json config/target.json
 npm run doctor:target -- --config config/target.json --smoke
 ```
 
-2. Подготовьте неизменяемый case bundle. Идентификаторы в `--source` должны
-совпадать с `inputs.signedDocuments[].id` из formation request:
+2. Запустите локальный сервер:
 
 ```bash
-npm run target -- prepare \
-  --request incoming/contract.formation-request.json \
-  --draft incoming/new-edition.docx \
-  --source document-1=incoming/contract.pdf \
-  --source document-2=incoming/agreement-1.pdf \
-  --out data/cases
+npm start
 ```
 
-Команда повторно считает SHA-256 каждого PDF и DOCX, проверяет порядок,
-копирует входы в приватный каталог и создаёт `case-manifest.json`. Несовпадение
-любого файла останавливает процесс.
+Откройте `http://127.0.0.1:4317`. После загрузки документов и завершения OCR
+кнопка «Запустить формирование»:
 
-3. Запустите формирование и циклическое ревью:
-
-```bash
-npm run target -- run \
-  --case data/cases/CASE_ID \
-  --config config/target.json
-```
-
-Пайплайн:
-
-1. producer реконструирует действующую редакцию и создаёт первый кандидат;
-2. детерминированные проверки контролируют DOCX и защищённые OOXML-части;
-3. независимые reviewer-агенты на разных моделях запускаются параллельно;
-4. единственный synthesis-арбитр перепроверяет все замечания по источникам;
-5. подтверждённые дефекты исправляются, после чего весь review повторяется;
-6. повторяющийся кандидат и одинаковый набор замечаний переводят запуск в
-   `blocked`, а не в ложный успех;
-7. успешный автоматический этап останавливается в
-   `awaiting-human-approval`.
+- локально передаёт PDF, DOCX и formation request на loopback-сервер;
+- повторно проверяет SHA-256 и создаёт неизменяемый case bundle;
+- запускает producer и показывает состояние раундов;
+- отображает пять независимых reviewer-отчётов и решение арбитра;
+- позволяет скачать кандидат DOCX и его PDF-превью;
+- принимает ФИО проверяющего и подтверждает точные хеши;
+- финализирует и отдаёт готовый DOCX.
 
 Роли по умолчанию: реконструкция договора, юридическая дельта, внутренние
 ссылки и реквизиты, целостность DOCX, доказательность и безопасность.
 
-4. Проверьте состояние и подтвердите ровно тот кандидат, который прошёл review:
+Управляющий API принимает запросы только для `127.0.0.1`/`localhost`, требует
+одноразовый токен текущего процесса и проверяет `Origin`. Исходные файлы
+передаются по одному потоком с ограничением размера и повторной проверкой
+SHA-256. Временная staging-копия удаляется после создания case.
+
+## Резервный запуск через CLI
+
+UI является основным операторским сценарием. CLI можно использовать для
+диагностики, автоматизации или восстановления:
 
 ```bash
+npm run target -- prepare --request REQUEST.json --draft DRAFT.docx \
+  --source document-1=CONTRACT.pdf --out data/cases
+npm run target -- run --case data/cases/CASE_ID --config config/target.json
 npm run target -- status --run data/runs/RUN_ID
-
 npm run target -- approve \
   --run data/runs/RUN_ID \
   --candidate-sha256 HASH_ИЗ_STATE \

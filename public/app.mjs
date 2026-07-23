@@ -27,15 +27,20 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "add-files-button", "additional-file-input", "cancel-button", "confidence-badge",
-    "documents-list", "download-json", "download-text", "draft-drop-zone",
+    "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
+    "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
+    "documents-list", "download-candidate", "download-final", "download-json",
+    "download-preview", "download-text", "draft-drop-zone",
     "draft-file-input", "draft-summary",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
-    "file-summary", "force-ocr", "next-page", "ocr-overlay", "overlay-toggle",
+    "file-summary", "finalize-run", "force-ocr", "formation-run-card", "next-page",
+    "ocr-overlay", "overlay-toggle",
     "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
     "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail",
     "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
-    "rotate-page-left", "rotate-page-right", "rotation-select", "start-button",
+    "review-round-label", "reviewers-grid", "rotate-page-left", "rotate-page-right",
+    "rotation-select", "run-blocker", "run-detail", "run-id-label", "run-stages",
+    "run-status-badge", "start-button", "start-formation", "target-status-note",
     "viewer-canvas", "viewer-document-label", "viewer-page-label", "viewer-position",
     "viewer-stage", "workspace", "formation-status",
   ].map((id) => [id, document.getElementById(id)]),
@@ -55,6 +60,13 @@ const state = {
   processingPage: null,
   processingDetail: "",
   draftAgreement: null,
+  targetSession: null,
+  targetSessionError: null,
+  formationBusy: false,
+  formationJobId: null,
+  formationRunId: null,
+  formationRun: null,
+  formationPollTimer: null,
 };
 
 const browserCapabilities = {
@@ -87,6 +99,14 @@ const statusLabels = {
   "recognizing text": "Распознаётся текст страницы",
 };
 
+const reviewerLabels = {
+  "contract-reconstruction": "Реконструкция договора",
+  "legal-delta": "Юридическая дельта",
+  "cross-reference-consistency": "Ссылки и реквизиты",
+  "document-fidelity": "Целостность DOCX",
+  "evidence-security": "Доказательность и безопасность",
+};
+
 function currentDocument() {
   return state.documents[state.selectedDocument] ?? null;
 }
@@ -116,11 +136,20 @@ function isFormationReady() {
   return isOcrComplete() && Boolean(state.draftAgreement?.sha256);
 }
 
+function inputsLocked() {
+  return state.running || state.loading || Boolean(state.formationJobId);
+}
+
 function updateFormationState() {
   const hasOcrResults = completedPageCount() > 0;
   elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement;
   elements["download-json"].disabled = !isFormationReady();
   elements["download-text"].disabled = !isFormationReady();
+  const targetReady = Boolean(state.targetSession?.target?.ready);
+  elements["start-formation"].disabled = !isFormationReady()
+    || !targetReady
+    || state.formationBusy
+    || Boolean(state.formationJobId);
 
   if (isFormationReady()) {
     elements["formation-status"].textContent =
@@ -134,6 +163,20 @@ function updateFormationState() {
   } else {
     elements["formation-status"].textContent =
       "Завершите OCR подписанных PDF и загрузите новую редакцию DOCX.";
+  }
+
+  elements["target-status-note"].className = "target-status-note";
+  if (targetReady) {
+    const reviewerCount = state.targetSession.target.models.reviewers.length;
+    elements["target-status-note"].classList.add("ready");
+    elements["target-status-note"].textContent =
+      `Конфигурация GigaCode готова: producer, арбитр и ${reviewerCount} независимых рецензентов.`;
+  } else if (state.targetSessionError || state.targetSession?.target?.error) {
+    elements["target-status-note"].classList.add("failed");
+    elements["target-status-note"].textContent =
+      `GigaCode недоступен: ${state.targetSessionError ?? state.targetSession.target.error}`;
+  } else {
+    elements["target-status-note"].textContent = "Проверяется готовность GigaCode…";
   }
 }
 
@@ -167,19 +210,20 @@ function setRunning(running) {
   state.running = running;
   updateStartButtonLabel();
   const document = currentDocument();
-  elements["start-button"].disabled = running || state.loading || !hasReadyDocuments();
+  const locked = inputsLocked();
+  elements["start-button"].disabled = locked || !hasReadyDocuments();
   elements["cancel-button"].hidden = !running;
-  elements["reset-button"].disabled = running || state.loading;
-  elements["add-files-button"].disabled = running || state.loading;
-  elements["additional-file-input"].disabled = running || state.loading;
-  elements["file-input"].disabled = running || state.loading;
-  elements["draft-file-input"].disabled = running || state.loading;
-  elements["dpi-select"].disabled = running;
-  elements["force-ocr"].disabled = running;
-  elements["rotation-select"].disabled = running;
-  elements["rotate-page-left"].disabled = running || !document?.pdf;
-  elements["rotate-page-right"].disabled = running || !document?.pdf;
-  elements["reset-page-rotation"].disabled = running
+  elements["reset-button"].disabled = locked;
+  elements["add-files-button"].disabled = locked;
+  elements["additional-file-input"].disabled = locked;
+  elements["file-input"].disabled = locked;
+  elements["draft-file-input"].disabled = locked;
+  elements["dpi-select"].disabled = locked;
+  elements["force-ocr"].disabled = locked;
+  elements["rotation-select"].disabled = locked;
+  elements["rotate-page-left"].disabled = locked || !document?.pdf;
+  elements["rotate-page-right"].disabled = locked || !document?.pdf;
+  elements["reset-page-rotation"].disabled = locked
     || !document?.pdf
     || document.pageRotationOverrides[String(state.selectedPage)] == null;
   if (running) {
@@ -268,14 +312,14 @@ function renderFileSummary() {
       up.textContent = "↑";
       up.title = "Переместить выше";
       up.setAttribute("aria-label", `Переместить «${document.file.name}» выше`);
-      up.disabled = state.running || state.loading || index === 1;
+      up.disabled = inputsLocked() || index === 1;
       up.addEventListener("click", () => reorderHistoricalDocument(index, -1));
       const down = globalThis.document.createElement("button");
       down.type = "button";
       down.textContent = "↓";
       down.title = "Переместить ниже";
       down.setAttribute("aria-label", `Переместить «${document.file.name}» ниже`);
-      down.disabled = state.running || state.loading || index === state.documents.length - 1;
+      down.disabled = inputsLocked() || index === state.documents.length - 1;
       down.addEventListener("click", () => reorderHistoricalDocument(index, 1));
       trailing.append(up, down);
     } else {
@@ -289,7 +333,7 @@ function renderFileSummary() {
 }
 
 function reorderHistoricalDocument(index, direction) {
-  if (state.running || state.loading) return;
+  if (inputsLocked()) return;
   const selectedId = currentDocument()?.id;
   const reordered = moveHistoricalDocument(state.documents, index, direction);
   if (reordered === state.documents) return;
@@ -331,7 +375,7 @@ function renderDraftAgreement() {
   replace.type = "button";
   replace.className = "replace-draft-button";
   replace.textContent = "Заменить";
-  replace.disabled = state.running || state.loading;
+  replace.disabled = inputsLocked();
   replace.addEventListener("click", () => {
     elements["draft-file-input"].value = "";
     elements["draft-file-input"].click();
@@ -341,7 +385,7 @@ function renderDraftAgreement() {
 }
 
 async function loadDraftAgreement(fileList) {
-  if (state.running || state.loading) return;
+  if (inputsLocked()) return;
   const files = Array.from(fileList ?? []);
   if (files.length !== 1) {
     setError("Выберите один файл новой редакции в формате DOCX.");
@@ -373,7 +417,7 @@ function validatePdfFiles(files) {
 }
 
 async function loadDocuments(fileList, { append = false } = {}) {
-  if (state.running || state.loading) return;
+  if (inputsLocked()) return;
   const files = Array.from(fileList ?? []);
   const validationError = validatePdfFiles(files);
   if (validationError) {
@@ -472,7 +516,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
 }
 
 function resetDocuments() {
-  if (state.running || state.loading) return;
+  if (inputsLocked()) return;
   destroyDocuments();
   state.documents = [];
   state.draftAgreement = null;
@@ -667,14 +711,14 @@ function updatePageRotationControls() {
   elements["page-rotation-label"].textContent = override == null
     ? `По умолчанию: ${rotationLabel(mode)}`
     : rotationLabel(mode);
-  elements["rotate-page-left"].disabled = state.running || !document?.pdf;
-  elements["rotate-page-right"].disabled = state.running || !document?.pdf;
-  elements["reset-page-rotation"].disabled = state.running || !document?.pdf || override == null;
+  elements["rotate-page-left"].disabled = inputsLocked() || !document?.pdf;
+  elements["rotate-page-right"].disabled = inputsLocked() || !document?.pdf;
+  elements["reset-page-rotation"].disabled = inputsLocked() || !document?.pdf || override == null;
 }
 
 async function rotateSelectedPage(delta) {
   const document = currentDocument();
-  if (!document?.pdf || state.running) return;
+  if (!document?.pdf || inputsLocked()) return;
   const page = await document.pdf.getPage(state.selectedPage);
   const displayedViewport = page.getViewport({ scale: 1 });
   const currentMode = rotationModeForPage(state.selectedPage, null, document);
@@ -870,7 +914,7 @@ function readSettings() {
 }
 
 async function runOcr() {
-  if (!hasReadyDocuments() || state.running) return;
+  if (!hasReadyDocuments() || inputsLocked()) return;
   if (missingBrowserCapabilities.length > 0) {
     setError(
       `Этот браузер не предоставляет необходимые возможности: ${missingBrowserCapabilities.join(", ")}. `
@@ -1027,6 +1071,374 @@ function buildCurrentFormationRequest() {
   });
 }
 
+async function initializeTargetSession() {
+  try {
+    const response = await fetch("/api/workflow/session", {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Локальный API недоступен.");
+    state.targetSession = result;
+    state.targetSessionError = null;
+  } catch (error) {
+    state.targetSession = null;
+    state.targetSessionError = error.message ?? String(error);
+  }
+  updateFormationState();
+}
+
+async function workflowFetch(relativePath, options = {}) {
+  const token = state.targetSession?.token;
+  if (!token) throw new Error("Локальная сессия формирования не инициализирована.");
+  const headers = new Headers(options.headers ?? {});
+  headers.set("X-Contractility-Token", token);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`/api/workflow${relativePath}`, {
+    ...options,
+    cache: "no-store",
+    headers,
+  });
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      message = (await response.json()).error ?? message;
+    } catch {
+      // Keep the HTTP status when the response is not JSON.
+    }
+    throw new Error(message);
+  }
+  return response;
+}
+
+async function workflowJson(relativePath, options = {}) {
+  const response = await workflowFetch(relativePath, options);
+  return response.json();
+}
+
+function setRunStatus(title, detail, tone = "") {
+  elements["formation-run-card"].hidden = false;
+  elements["run-status-badge"].textContent = title;
+  elements["run-status-badge"].className = `run-status-badge${tone ? ` ${tone}` : ""}`;
+  elements["run-detail"].textContent = detail;
+}
+
+function setRunBlocker(message) {
+  elements["run-blocker"].textContent = message;
+  elements["run-blocker"].hidden = !message;
+}
+
+function renderRunStages(runState) {
+  const status = runState?.status ?? "uploading";
+  const modes = {
+    uploading: ["active", "", "", "", ""],
+    created: ["active", "", "", "", ""],
+    "inputs-verified": ["complete", "active", "", "", ""],
+    "candidate-created": ["complete", "complete", "active", "", ""],
+    reviewing: ["complete", "complete", "active", "", ""],
+    fixing: ["complete", "complete", "active", "", ""],
+    "awaiting-human-approval": ["complete", "complete", "complete", "active", ""],
+    approved: ["complete", "complete", "complete", "complete", "active"],
+    finalized: ["complete", "complete", "complete", "complete", "complete"],
+  };
+  const selected = modes[status] ?? modes.reviewing;
+  const stages = elements["run-stages"].querySelectorAll("li");
+  stages.forEach((stage, index) => {
+    stage.classList.toggle("active", selected[index] === "active");
+    stage.classList.toggle("complete", selected[index] === "complete");
+  });
+}
+
+function reviewerTitle(id) {
+  return reviewerLabels[id] ?? id;
+}
+
+function renderReviewers(run) {
+  elements["reviewers-grid"].replaceChildren();
+  const reports = new Map((run?.reviews ?? []).map((report) => [report.reviewer.id, report]));
+  const configured = state.targetSession?.target?.models?.reviewers ?? [];
+  const reviewers = configured.length > 0
+    ? configured
+    : [...reports.values()].map((report) => ({
+      id: report.reviewer.id,
+      model: report.reviewer.requestedModel,
+    }));
+
+  for (const reviewer of reviewers) {
+    const report = reports.get(reviewer.id);
+    const card = globalThis.document.createElement("article");
+    card.className = "reviewer-card";
+    const header = globalThis.document.createElement("header");
+    const title = globalThis.document.createElement("strong");
+    title.textContent = reviewerTitle(reviewer.id);
+    const verdict = globalThis.document.createElement("span");
+    verdict.className = "reviewer-verdict";
+    if (!report) {
+      verdict.textContent = "Ожидание";
+    } else if (report.verdict === "pass") {
+      verdict.classList.add("good");
+      verdict.textContent = "Пройдено";
+    } else {
+      verdict.classList.add("failed");
+      verdict.textContent = `${report.findings.length} замеч.`;
+    }
+    header.append(title, verdict);
+    const model = globalThis.document.createElement("span");
+    model.className = "reviewer-model";
+    model.textContent = reviewer.model ?? report?.reviewer?.requestedModel ?? "модель не указана";
+    card.append(header, model);
+
+    if (report?.findings?.length > 0) {
+      const list = globalThis.document.createElement("ul");
+      list.className = "finding-list";
+      for (const finding of report.findings.slice(0, 3)) {
+        const item = globalThis.document.createElement("li");
+        const severity = globalThis.document.createElement("b");
+        severity.textContent = finding.severity;
+        item.append(severity, globalThis.document.createTextNode(finding.observed));
+        list.append(item);
+      }
+      if (report.findings.length > 3) {
+        const remaining = globalThis.document.createElement("li");
+        remaining.textContent = `Ещё замечаний: ${report.findings.length - 3}`;
+        list.append(remaining);
+      }
+      card.append(list);
+    }
+    elements["reviewers-grid"].append(card);
+  }
+}
+
+function renderFormationRun(job) {
+  state.formationRunId = job.runId ?? state.formationRunId;
+  state.formationRun = job.run ?? state.formationRun;
+  const run = job.run;
+  const runState = run?.state;
+  const status = runState?.status;
+  elements["run-id-label"].textContent = state.formationRunId ?? job.jobId ?? "";
+  elements["review-round-label"].textContent = runState?.round
+    ? `Раунд ${runState.round}. Отчёты обновляются после завершения всех рецензентов.`
+    : "Отчёты появятся после формирования кандидата.";
+  renderRunStages(runState);
+  renderReviewers(run);
+
+  elements["consensus-panel"].hidden = !run?.consensus;
+  elements["consensus-summary"].textContent = run?.consensus?.summary ?? "";
+  setRunBlocker(runState?.blocker ?? (job.status === "failed" ? job.error : ""));
+
+  const awaitingApproval = status === "awaiting-human-approval";
+  const approved = status === "approved";
+  const finalized = status === "finalized";
+  const candidateReady = awaitingApproval || approved || finalized;
+  elements["download-candidate"].disabled = !candidateReady;
+  elements["download-preview"].disabled = !candidateReady;
+  elements["approver-name"].disabled = !awaitingApproval;
+  elements["approve-candidate"].disabled = !awaitingApproval
+    || !elements["approver-name"].value.trim();
+  elements["finalize-run"].disabled = !approved;
+  elements["download-final"].disabled = !finalized;
+
+  if (job.status === "failed" || status === "failed") {
+    setRunStatus("Ошибка", job.error ?? runState?.error ?? "Запуск завершился с ошибкой.", "failed");
+  } else if (status === "blocked") {
+    setRunStatus("Требуется решение", runState.blocker ?? "Автоматический контур остановлен.", "failed");
+  } else if (awaitingApproval) {
+    setRunStatus(
+      "Нужна проверка",
+      "Автоматическое ревью завершено. Скачайте кандидат и PDF-превью, затем подтвердите точные хеши.",
+    );
+  } else if (approved) {
+    setRunStatus("Подтверждено", "Хеши зафиксированы. Можно выпустить финальный DOCX.", "good");
+  } else if (finalized) {
+    setRunStatus("Готово", "Финальный DOCX сформирован и повторно проверен по SHA-256.", "good");
+  } else if (runState) {
+    const roundText = runState.round ? ` · раунд ${runState.round}` : "";
+    setRunStatus(run.stateLabel, `${run.stateLabel}${roundText}. Не закрывайте страницу.`);
+  } else {
+    setRunStatus("Запуск", "GigaCode создаёт рабочий каталог и проверяет входные файлы.");
+  }
+}
+
+function scheduleFormationPoll() {
+  clearTimeout(state.formationPollTimer);
+  state.formationPollTimer = setTimeout(() => {
+    pollFormationJob().catch((error) => {
+      state.formationBusy = false;
+      setRunBlocker(error.message ?? String(error));
+      setRunStatus("Ошибка статуса", "Не удалось получить состояние запуска.", "failed");
+      updateFormationState();
+    });
+  }, 1000);
+}
+
+async function pollFormationJob() {
+  if (!state.formationJobId) return;
+  const job = await workflowJson(`/jobs/${encodeURIComponent(state.formationJobId)}`);
+  renderFormationRun(job);
+  if (job.status === "running") {
+    scheduleFormationPoll();
+    return;
+  }
+  state.formationBusy = false;
+  if (
+    job.status === "failed"
+    || ["blocked", "failed", "finalized"].includes(job.run?.state?.status)
+  ) {
+    state.formationJobId = null;
+  }
+  updateFormationState();
+  setRunning(false);
+}
+
+async function launchFormation() {
+  if (!isFormationReady() || !state.targetSession?.target?.ready || state.formationBusy) return;
+  const formationRequest = buildCurrentFormationRequest();
+  let stageId = null;
+  state.formationBusy = true;
+  state.formationJobId = "preparing";
+  setError("");
+  setRunBlocker("");
+  renderRunStages(null);
+  renderReviewers(null);
+  setRunStatus("Загрузка входов", "Создаётся локальный защищённый case bundle.");
+  updateFormationState();
+  setRunning(false);
+
+  try {
+    const staging = await workflowJson("/staging", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ formationRequest }),
+    });
+    stageId = staging.stageId;
+
+    for (const [index, source] of formationRequest.inputs.signedDocuments.entries()) {
+      const document = state.documents.find((item) => item.id === source.id);
+      if (!document) throw new Error(`Не найден локальный PDF ${source.id}.`);
+      setRunStatus(
+        "Загрузка входов",
+        `Передаётся ${index + 1} из ${formationRequest.inputs.signedDocuments.length} PDF: ${source.file.name}`,
+      );
+      await workflowFetch(
+        `/staging/${encodeURIComponent(stageId)}/signed/${encodeURIComponent(source.id)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/pdf" },
+          body: document.file,
+        },
+      );
+    }
+
+    setRunStatus("Загрузка входов", `Передаётся новая редакция: ${state.draftAgreement.file.name}`);
+    await workflowFetch(`/staging/${encodeURIComponent(stageId)}/draft`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": state.draftAgreement.file.type
+          || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+      body: state.draftAgreement.file,
+    });
+
+    setRunStatus("Проверка SHA-256", "Файлы сверяются с результатом OCR и копируются в неизменяемый case.");
+    const prepared = await workflowJson(`/staging/${encodeURIComponent(stageId)}/prepare`, {
+      method: "POST",
+    });
+    stageId = null;
+    const job = await workflowJson(`/cases/${encodeURIComponent(prepared.caseId)}/runs`, {
+      method: "POST",
+    });
+    state.formationJobId = job.jobId;
+    renderFormationRun(job);
+    scheduleFormationPoll();
+  } catch (error) {
+    if (stageId) {
+      await workflowFetch(`/staging/${encodeURIComponent(stageId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
+    state.formationBusy = false;
+    state.formationJobId = null;
+    setRunBlocker(error.message ?? String(error));
+    setRunStatus("Запуск не выполнен", "Проверьте сообщение и конфигурацию GigaCode.", "failed");
+    updateFormationState();
+    setRunning(false);
+  }
+}
+
+async function refreshFormationRun() {
+  if (!state.formationRunId) return;
+  const run = await workflowJson(`/runs/${encodeURIComponent(state.formationRunId)}`);
+  renderFormationRun({
+    status: "completed",
+    runId: state.formationRunId,
+    run,
+  });
+  if (["blocked", "failed", "finalized"].includes(run.state?.status)) {
+    state.formationJobId = null;
+    updateFormationState();
+    setRunning(false);
+  }
+}
+
+async function approveFormationCandidate() {
+  const runState = state.formationRun?.state;
+  const approver = elements["approver-name"].value.trim();
+  if (!state.formationRunId || !runState || !approver) return;
+  elements["approve-candidate"].disabled = true;
+  try {
+    await workflowJson(`/runs/${encodeURIComponent(state.formationRunId)}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approver,
+        candidateSha256: runState.candidateSha256,
+        findingsSha256: runState.findingsSha256,
+      }),
+    });
+    await refreshFormationRun();
+  } catch (error) {
+    setError(`Не удалось подтвердить кандидат: ${error.message ?? error}`);
+    elements["approve-candidate"].disabled = false;
+  }
+}
+
+async function finalizeFormation() {
+  if (!state.formationRunId) return;
+  elements["finalize-run"].disabled = true;
+  try {
+    await workflowJson(`/runs/${encodeURIComponent(state.formationRunId)}/finalize`, {
+      method: "POST",
+    });
+    await refreshFormationRun();
+  } catch (error) {
+    setError(`Не удалось финализировать документ: ${error.message ?? error}`);
+    elements["finalize-run"].disabled = false;
+  }
+}
+
+async function downloadRunFile(kind) {
+  if (!state.formationRunId) return;
+  try {
+    const response = await workflowFetch(
+      `/runs/${encodeURIComponent(state.formationRunId)}/files/${encodeURIComponent(kind)}`,
+    );
+    const names = {
+      candidate: "candidate-additional-agreement.docx",
+      preview: "candidate-additional-agreement.pdf",
+      final: "final-additional-agreement.docx",
+    };
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = globalThis.document.createElement("a");
+    anchor.href = url;
+    anchor.download = names[kind] ?? "contractility-result";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    setError(`Не удалось скачать результат: ${error.message ?? error}`);
+  }
+}
+
 function download(name, type, content) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -1112,6 +1524,32 @@ elements["download-text"].addEventListener("click", () => {
     setError(error.message ?? String(error));
   }
 });
+elements["start-formation"].addEventListener("click", () => {
+  launchFormation().catch((error) => {
+    console.error(error);
+    setError(`Не удалось запустить формирование: ${error.message ?? error}`);
+  });
+});
+elements["approver-name"].addEventListener("input", () => {
+  elements["approve-candidate"].disabled =
+    state.formationRun?.state?.status !== "awaiting-human-approval"
+    || !elements["approver-name"].value.trim();
+});
+elements["approve-candidate"].addEventListener("click", () => {
+  approveFormationCandidate().catch(console.error);
+});
+elements["finalize-run"].addEventListener("click", () => {
+  finalizeFormation().catch(console.error);
+});
+elements["download-candidate"].addEventListener("click", () => {
+  downloadRunFile("candidate").catch(console.error);
+});
+elements["download-preview"].addEventListener("click", () => {
+  downloadRunFile("preview").catch(console.error);
+});
+elements["download-final"].addEventListener("click", () => {
+  downloadRunFile("final").catch(console.error);
+});
 
 for (const eventName of ["dragenter", "dragover"]) {
   elements["drop-zone"].addEventListener(eventName, (event) => {
@@ -1149,3 +1587,6 @@ elements["draft-drop-zone"].addEventListener("drop", (event) => {
 window.addEventListener("resize", () => {
   if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
 });
+
+renderReviewers(null);
+initializeTargetSession().catch(console.error);

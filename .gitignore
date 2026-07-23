@@ -4,5 +4,7 @@ tmp/
 data/jobs/
 data/cases/
 data/runs/
+data/ui-staging/
+/config/target.json
 *.log
 /testdata

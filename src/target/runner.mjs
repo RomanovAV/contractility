@@ -315,7 +315,7 @@ async function createNextRound(currentDirectory, nextDirectory) {
   ]);
 }
 
-export async function createAndRun({ caseDirectory, config }) {
+export async function createAndRun({ caseDirectory, config, onRunCreated = null }) {
   const verifiedCase = await verifyCase(caseDirectory);
   const runId = `run-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}-${randomBytes(4).toString("hex")}`;
   const runDirectory = path.join(config.storage.runRoot, runId);
@@ -331,6 +331,7 @@ export async function createAndRun({ caseDirectory, config }) {
   };
   try {
     state = await writeState(runDirectory, state);
+    if (onRunCreated) await onRunCreated({ runId, runDirectory });
     const inputDirectory = path.join(runDirectory, "input");
     await ensurePrivateDirectory(inputDirectory);
     await Promise.all([
