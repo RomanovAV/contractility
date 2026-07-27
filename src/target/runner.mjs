@@ -109,6 +109,13 @@ function formationPolicy() {
     preserveSourceMeaning: true,
     doNotTreatDraftAsSigned: true,
     preserveDocxStructure: true,
+    proposedAgreementRole: "declared-change-intent-and-output-template",
+    historicalDocumentFormats: "arbitrary",
+    requireStructuralSimilarityToCurrentContract: false,
+    preserveProposedAgreementLayout: true,
+    allowSemanticEditsInEditableOoxmlParts: true,
+    requiredCoverage: "all-changes-declared-by-proposed-agreement",
+    placeholderPolicy: "resolve-from-supplied-content-or-block-specific-field",
     requireEvidenceForEveryChange: true,
     requireHumanApprovalBeforeFinalization: true,
   };

@@ -157,13 +157,13 @@ function updateFormationState() {
       "PDF-комплект распознан, порядок источников зафиксирован, DOCX проверен по SHA-256. Пакет готов для реконструкции действующей редакции и генерации финального файла.";
   } else if (!isOcrComplete() && state.draftAgreement) {
     elements["formation-status"].textContent =
-      "Новая редакция DOCX загружена. Завершите распознавание всех страниц подписанного комплекта.";
+      "Предлагаемое допсоглашение DOCX загружено. Завершите распознавание всех страниц подписанного комплекта.";
   } else if (isOcrComplete()) {
     elements["formation-status"].textContent =
-      "Подписанный комплект распознан. Загрузите новую редакцию дополнительного соглашения в DOCX.";
+      "Подписанный комплект распознан. Загрузите предлагаемое дополнительное соглашение в DOCX.";
   } else {
     elements["formation-status"].textContent =
-      "Завершите OCR подписанных PDF и загрузите новую редакцию DOCX.";
+      "Завершите OCR подписанных PDF и загрузите предлагаемое дополнительное соглашение DOCX.";
   }
 
   elements["target-status-note"].className = "target-status-note";
@@ -373,7 +373,7 @@ function renderDraftAgreement() {
   const meta = globalThis.document.createElement("span");
   meta.textContent = `${humanFileSize(draft.file.size)} · SHA-256 ${draft.sha256.slice(0, 12)}…`;
   const note = globalThis.document.createElement("small");
-  note.textContent = "Новая редакция · не подписанный документ";
+  note.textContent = "Предлагаемое ДС · основа результата · не подписанный источник";
   copy.append(name, meta, note);
   const replace = globalThis.document.createElement("button");
   replace.type = "button";
@@ -392,7 +392,7 @@ async function loadDraftAgreement(fileList) {
   if (inputsLocked()) return;
   const files = Array.from(fileList ?? []);
   if (files.length !== 1) {
-    setError("Выберите один файл новой редакции в формате DOCX.");
+    setError("Выберите один файл предлагаемого допсоглашения в формате DOCX.");
     return;
   }
   const file = files[0];
@@ -1061,7 +1061,7 @@ function buildDocumentResult() {
 
 function buildCurrentFormationRequest() {
   if (!state.draftAgreement) {
-    throw new TypeError("Загрузите новую редакцию дополнительного соглашения DOCX.");
+    throw new TypeError("Загрузите предлагаемое дополнительное соглашение DOCX.");
   }
   const { file, sha256: draftSha256 } = state.draftAgreement;
   return buildFormationRequest({
@@ -1427,7 +1427,7 @@ async function launchFormation() {
       );
     }
 
-    setRunStatus("Загрузка входов", `Передаётся новая редакция: ${state.draftAgreement.file.name}`);
+    setRunStatus("Загрузка входов", `Передаётся предлагаемое допсоглашение: ${state.draftAgreement.file.name}`);
     await workflowFetch(`/staging/${encodeURIComponent(stageId)}/draft`, {
       method: "PUT",
       headers: {

@@ -50,7 +50,7 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="file-input"[^>]*multiple/);
   assert.match(indexHtml, /id="additional-file-input"[^>]*multiple/);
   assert.match(indexHtml, /id="draft-file-input"[^>]*\.docx/);
-  assert.match(indexHtml, /Новая редакция допсоглашения/);
+  assert.match(indexHtml, /Предлагаемое допсоглашение/);
   assert.match(indexHtml, /Финальное соглашение/);
   assert.match(indexHtml, /id="start-formation"/);
   assert.match(indexHtml, /id="formation-run-card"/);

@@ -22,7 +22,7 @@
       {
         "id": "legal-delta",
         "model": "MODEL_REVIEW_B",
-        "focus": "whether the final additional agreement contains exactly the changes required against the current contract",
+        "focus": "whether the final additional agreement preserves the proposed DOCX form and completely covers every declared change against the current contract",
         "required": true
       },
       {
@@ -61,4 +61,3 @@
     "retainAgentTranscripts": false
   }
 }
-

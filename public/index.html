@@ -24,7 +24,7 @@
         <div>
           <p class="eyebrow">Подготовка дополнительного соглашения</p>
           <h1>Соберём действующую редакцию договора перед новыми изменениями</h1>
-          <p class="intro-copy">Исходный договор и все подписанные допсоглашения обрабатываются по порядку. Новая редакция в Word загружается отдельно и не смешивается с подписанными документами.</p>
+          <p class="intro-copy">Исходный договор и все подписанные допсоглашения обрабатываются по порядку. Предлагаемое допсоглашение в Word задаёт требуемые изменения и форму итогового документа, но не считается подписанным источником.</p>
         </div>
         <div class="privacy-card">
           <span class="privacy-icon" aria-hidden="true">⌁</span>
@@ -35,7 +35,7 @@
       <ol class="workflow-strip" aria-label="Порядок формирования">
         <li><span>01</span><strong>Исходный договор</strong><small>Подписанный PDF</small></li>
         <li><span>02</span><strong>История изменений</strong><small>Подписанные PDF по порядку</small></li>
-        <li><span>03</span><strong>Новая редакция</strong><small>Отдельный DOCX</small></li>
+        <li><span>03</span><strong>Предлагаемое ДС</strong><small>Основа результата</small></li>
         <li><span>04</span><strong>Финальное соглашение</strong><small>После проверки изменений</small></li>
       </ol>
 
@@ -61,12 +61,12 @@
 
         <div class="draft-section" aria-labelledby="draft-title">
           <div class="section-heading compact-heading">
-            <div><span class="step-number">02</span><div><h2 id="draft-title">Новая редакция допсоглашения</h2><p>Загрузите отдельно файл Word, который учитывает новые изменения к договору.</p></div></div>
+            <div><span class="step-number">02</span><div><h2 id="draft-title">Предлагаемое допсоглашение</h2><p>Загрузите Word-файл с требуемыми изменениями. Его форма и оформление станут основой итогового документа.</p></div></div>
           </div>
           <label id="draft-drop-zone" class="draft-drop-zone">
             <input id="draft-file-input" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
             <span class="docx-badge" aria-hidden="true">DOCX</span>
-            <span><strong>Выбрать новую редакцию</strong><small>Этот файл не считается подписанным допсоглашением</small></span>
+            <span><strong>Выбрать предлагаемое допсоглашение</strong><small>Источник требований и шаблон результата; не считается подписанным документом</small></span>
           </label>
           <div id="draft-summary" class="draft-summary" aria-live="polite" hidden></div>
         </div>
@@ -154,7 +154,7 @@
         <div>
           <p class="eyebrow">Следующий этап</p>
           <h2>Сформировать и проверить допсоглашение</h2>
-          <p id="formation-status">Завершите OCR и загрузите новую редакцию DOCX.</p>
+          <p id="formation-status">Завершите OCR и загрузите предлагаемое допсоглашение DOCX.</p>
           <p id="target-status-note" class="target-status-note">Проверяется готовность GigaCode…</p>
         </div>
         <div class="export-actions">

@@ -116,12 +116,14 @@ test("buildFormationRequest records the four-stage legal workflow and DOCX ident
   assert.deepEqual(request.workflow.map((step) => step.action), [
     "reconstruct-current-contract",
     "apply-signed-amendments",
-    "compare-new-edition",
+    "extract-proposed-changes",
     "generate-final-agreement",
   ]);
   assert.equal(request.inputs.newAgreementEdition.file.sha256, "draft-hash");
   assert.equal(request.rules.amendmentOrder, "strict-input-order");
   assert.equal(request.rules.doNotTreatDraftAsSigned, true);
+  assert.equal(request.rules.proposedAgreementRole, "declared-change-intent-and-output-template");
+  assert.equal(request.rules.requireStructuralSimilarityToCurrentContract, false);
   assert.equal(request.rules.requireHumanApprovalBeforeFinalization, true);
 });
 
@@ -135,7 +137,7 @@ test("buildFormationRequest rejects incomplete OCR and missing DOCX", () => {
   assert.throws(() => buildFormationRequest({
     ocrResult: completeOcrResult(),
     draftAgreement: null,
-  }), /новая редакция/);
+  }), /предлагаемое дополнительное соглашение/);
 });
 
 test("createFormationTextExport keeps workflow, hashes and source boundaries", () => {

@@ -42,7 +42,7 @@ export function validateFormationRequest(request) {
     ids.add(document.id);
   });
   if (!draft?.name || !draft?.sha256 || !Number.isFinite(draft.size)) {
-    throw new TypeError("В запросе отсутствует идентичность новой редакции DOCX.");
+    throw new TypeError("В запросе отсутствует идентичность предлагаемого допсоглашения DOCX.");
   }
   if (!request.rules?.requireHumanApprovalBeforeFinalization) {
     throw new TypeError("Финализация без ручного подтверждения запрещена.");
@@ -101,7 +101,7 @@ export async function prepareCase({
     });
   }
   if (!draftPath.toLowerCase().endsWith(".docx")) {
-    throw new TypeError("Новая редакция должна быть DOCX.");
+    throw new TypeError("Предлагаемое допсоглашение должно быть DOCX.");
   }
   const draftDestination = path.join(draftDirectory, "new-edition.docx");
   await copyVerified(draftPath, draftDestination, draftExpected);
@@ -141,7 +141,7 @@ export async function verifyCase(caseDirectory) {
   }
   const draftPath = path.join(caseDirectory, manifest.newAgreementEdition.path);
   if (await sha256File(draftPath) !== manifest.newAgreementEdition.sha256) {
-    throw new Error("Новая редакция DOCX изменена после подготовки case.");
+    throw new Error("Предлагаемое допсоглашение DOCX изменено после подготовки case.");
   }
   return { manifest, requestPath, draftPath };
 }

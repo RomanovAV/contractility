@@ -14,8 +14,14 @@ Security boundary:
 
 Review the exact candidate hash named in `review-task.json`.
 Resolve every path relative to the current working directory.
-Every finding must identify its signed source document and page.
-If the problem is purely structural, cite the closest source document/page that establishes
-the expected content and use the candidate locator in `target`.
+The candidate is an additional agreement based on the proposed DOCX template.
+Do not require its structure, numbering, terminology system, or layout to match
+the reconstructed contract or historical amendments. Review semantic coverage
+of all declared changes and preservation of the proposed DOCX layout.
+For a missing or distorted declared change, cite its locator in the proposed
+agreement and the candidate locator in `target`. Cite a signed document and page
+when the finding concerns the reconstructed baseline, chronology, or a claim
+that must be supported by signed evidence. Do not invent a signed source for an
+intent that is declared only by the proposed agreement.
 
 The orchestrator appends the exact JSON output contract to this prompt.

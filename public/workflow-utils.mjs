@@ -10,7 +10,7 @@ const DOCX_COMPATIBLE_MIME_TYPES = new Set([
 
 export function validateDraftAgreementFile(file) {
   if (!file) {
-    return "Выберите новую редакцию дополнительного соглашения в формате DOCX.";
+    return "Выберите предлагаемое дополнительное соглашение в формате DOCX.";
   }
   if (!String(file.name ?? "").toLowerCase().endsWith(".docx")) {
     return `Файл «${file.name ?? "без имени"}» должен быть в формате DOCX.`;
@@ -74,7 +74,7 @@ export function buildFormationRequest({
 }) {
   requireCompleteOcr(ocrResult);
   if (!draftAgreement?.sha256 || !draftAgreement?.name) {
-    throw new TypeError("Для формирования требуется новая редакция дополнительного соглашения DOCX.");
+    throw new TypeError("Для формирования требуется предлагаемое дополнительное соглашение DOCX.");
   }
 
   return {
@@ -83,7 +83,7 @@ export function buildFormationRequest({
     inputs: {
       signedDocuments: ocrResult.documents,
       newAgreementEdition: {
-        role: "new-agreement-edition",
+        role: "proposed-additional-agreement",
         file: {
           name: draftAgreement.name,
           size: draftAgreement.size,
@@ -107,13 +107,13 @@ export function buildFormationRequest({
       },
       {
         order: 3,
-        action: "compare-new-edition",
-        instruction: "Сопоставить новую редакцию DOCX с реконструированной действующей редакцией договора.",
+        action: "extract-proposed-changes",
+        instruction: "Извлечь из предлагаемого DOCX все требуемые изменения и семантически сопоставить их с действующей редакцией договора.",
       },
       {
         order: 4,
         action: "generate-final-agreement",
-        instruction: "Создать финальное дополнительное соглашение, содержащее только необходимые изменения к действующей редакции.",
+        instruction: "Создать финальное дополнительное соглашение на основе формы предлагаемого DOCX, полностью покрывающее все заявленные изменения и необходимые согласующие корректировки.",
       },
     ],
     rules: {
@@ -122,6 +122,13 @@ export function buildFormationRequest({
       preserveSourceMeaning: true,
       doNotTreatDraftAsSigned: true,
       preserveDocxStructure: true,
+      proposedAgreementRole: "declared-change-intent-and-output-template",
+      historicalDocumentFormats: "arbitrary",
+      requireStructuralSimilarityToCurrentContract: false,
+      preserveProposedAgreementLayout: true,
+      allowSemanticEditsInEditableOoxmlParts: true,
+      requiredCoverage: "all-changes-declared-by-proposed-agreement",
+      placeholderPolicy: "resolve-from-supplied-content-or-block-specific-field",
       preserveDocxFeatures: [
         "page-layout",
         "styles",
@@ -139,7 +146,7 @@ export function buildFormationRequest({
       currentContractEdition: "Полная действующая редакция после всех подписанных изменений.",
       changeRegister: "Операции с источником, пунктом назначения и уровнем уверенности.",
       unresolvedIssues: "Коллизии, пропуски OCR и неоднозначности для ручного решения.",
-      finalAgreementDocx: "Финальный DOCX на основе отдельно переданной новой редакции.",
+      finalAgreementDocx: "Финальный DOCX в форме предлагаемого дополнительного соглашения, покрывающий все заявленные изменения.",
     },
     provenance: {
       ocrSchemaVersion: ocrResult.schemaVersion,
@@ -161,7 +168,7 @@ export function createFormationTextExport(formationRequest) {
     "######## ЗАДАНИЕ НА ФОРМИРОВАНИЕ ДОПОЛНИТЕЛЬНОГО СОГЛАШЕНИЯ ########",
     workflow,
     "",
-    `Новая редакция DOCX: ${draft.name}`,
+    `Предлагаемое дополнительное соглашение DOCX: ${draft.name}`,
     `SHA-256 DOCX: ${draft.sha256}`,
     "DOCX передаётся отдельным файлом и не является подписанным документом.",
     "",
