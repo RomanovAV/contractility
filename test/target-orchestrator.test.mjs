@@ -25,6 +25,7 @@ import {
   approveRun,
   createAndRun,
   finalizeRun,
+  parseProducerStatus,
   verifyRun,
 } from "../src/target/runner.mjs";
 import { parseReviewReport } from "../src/target/review.mjs";
@@ -178,6 +179,38 @@ test("runGigacode uses the requested model and strict one-shot flags", async () 
   assert.equal(transcriptSummary.model, "smoke-model");
   assert.equal(transcriptSummary.ok, true);
   assert.equal(transcriptSummary.transcriptLimited, false);
+});
+
+test("producer status parser accepts one status object with harmless model formatting", () => {
+  assert.deepEqual(
+    parseProducerStatus('{"status":"change-plan-ready"}'),
+    { status: "change-plan-ready" },
+  );
+  assert.deepEqual(
+    parseProducerStatus('```json\n{"status":"change-plan-ready"}\n```'),
+    { status: "change-plan-ready" },
+  );
+  assert.deepEqual(
+    parseProducerStatus('План подготовлен.\n{"status":"change-plan-ready"}'),
+    { status: "change-plan-ready" },
+  );
+  assert.deepEqual(
+    parseProducerStatus('{"status":"blocked","reason":"Не найдено значение {СУММА}"}'),
+    { status: "blocked", reason: "Не найдено значение {СУММА}" },
+  );
+});
+
+test("producer status parser rejects missing or ambiguous status objects", () => {
+  assert.throws(
+    () => parseProducerStatus("План подготовлен."),
+    /нет корректного JSON-объекта/,
+  );
+  assert.throws(
+    () => parseProducerStatus(
+      '{"status":"change-plan-ready"}\n{"status":"blocked","reason":"ambiguous"}',
+    ),
+    /несколько JSON-объектов/,
+  );
 });
 
 test("review parser rejects prose and accepts domain findings", () => {

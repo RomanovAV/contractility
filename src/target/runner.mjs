@@ -150,6 +150,73 @@ async function requireProducerArtifacts(roundDirectory) {
   return { currentContract, changeRegister, changePlan };
 }
 
+function isProducerStatus(value) {
+  return value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && typeof value.status === "string";
+}
+
+function embeddedJsonObjects(text) {
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === "\"") {
+      inString = true;
+    } else if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+export function parseProducerStatus(output) {
+  const text = String(output ?? "").trim();
+  try {
+    const exact = JSON.parse(text);
+    if (isProducerStatus(exact)) return exact;
+  } catch {
+    // Some models wrap the requested status in prose or a Markdown fence.
+  }
+
+  const candidates = embeddedJsonObjects(text)
+    .map((candidate) => {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        return null;
+      }
+    })
+    .filter(isProducerStatus);
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    throw new TypeError("ответ содержит несколько JSON-объектов со статусом");
+  }
+  throw new TypeError("в ответе нет корректного JSON-объекта со статусом");
+}
+
 async function runProducerStage({
   stage,
   expectedStatus,
@@ -186,9 +253,11 @@ async function runProducerStage({
     assertRequestedModel(result, config.models.producer);
     let status;
     try {
-      status = JSON.parse(result.output);
-    } catch {
-      throw new Error(`Producer ${stage} вернул некорректный JSON-статус.`);
+      status = parseProducerStatus(result.output);
+    } catch (error) {
+      throw new Error(
+        `Producer ${stage} вернул некорректный JSON-статус: ${error.message}.`,
+      );
     }
     if (status.status === "blocked") {
       return {
