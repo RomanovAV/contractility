@@ -219,6 +219,7 @@ async function runOnce({
   onEvent("prepared", {
     session,
     model,
+    attempt,
     command: config.command,
     promptChars: prompt.length,
   });
@@ -237,7 +238,7 @@ async function runOnce({
     stdio: ["ignore", "pipe", "pipe"],
   });
   activeChildren.add(child);
-  onEvent("started", { session, model, pid: child.pid });
+  onEvent("started", { session, model, attempt, pid: child.pid });
 
   let stdout = "";
   let stderr = "";
@@ -273,12 +274,12 @@ async function runOnce({
   child.stdout.on("data", (chunk) => {
     stdout = append(stdout, chunk);
     writeTranscriptChunk(transcript, "stdout", chunk);
-    onEvent("activity", { session, model, source: "stdout" });
+    onEvent("activity", { session, model, attempt, source: "stdout" });
   });
   child.stderr.on("data", (chunk) => {
     stderr = append(stderr, chunk);
     writeTranscriptChunk(transcript, "stderr", chunk);
-    onEvent("activity", { session, model, source: "stderr" });
+    onEvent("activity", { session, model, attempt, source: "stderr" });
   });
 
   let result;
@@ -345,7 +346,17 @@ async function runOnce({
   onEvent("finished", {
     session,
     model,
+    attempt,
     ok: response.ok,
+    errorKind: timedOut
+      ? "session-timeout"
+      : idleTimedOut
+        ? "idle-timeout"
+        : outputLimited
+          ? "output-limit"
+          : approvalUnavailable
+            ? "approval-unavailable"
+            : result.code === 0 ? null : "nonzero-exit",
     knownCliCancellation: response.knownCliCancellation,
     returnCode: response.returnCode,
     durationMs: response.durationMs,
@@ -380,7 +391,15 @@ export async function runGigacode(options) {
     if (last.ok || last.approvalUnavailable || !last.transient || attempt === retries) {
       return last;
     }
-    await delay((options.config.retryDelaySeconds ?? 5) * 1000);
+    const retryDelaySeconds = options.config.retryDelaySeconds ?? 5;
+    options.onEvent?.("retrying", {
+      session: options.session,
+      model: options.model,
+      attempt: attempt + 1,
+      nextAttempt: attempt + 2,
+      retryDelaySeconds,
+    });
+    await delay(retryDelaySeconds * 1000);
   }
   return last;
 }

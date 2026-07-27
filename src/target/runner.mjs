@@ -34,6 +34,11 @@ import {
   parseSynthesisResult,
   reviewOutputContract,
 } from "./review.mjs";
+import {
+  materializeEvidenceWorkspace,
+  verifyEvidenceWorkspace,
+} from "./evidence.mjs";
+import { createAgentStatusStore } from "./agent-status.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -76,9 +81,18 @@ function executorConfig(config) {
   };
 }
 
-function eventRecorder(runDirectory) {
-  return (event, fields) => {
-    void appendEvent(runDirectory, `gigacode.${event}`, fields);
+function createGigacodeEventRecorder(runDirectory, agentStatusStore) {
+  let pending = Promise.resolve();
+  return {
+    record(event, fields) {
+      agentStatusStore.record(event, fields);
+      if (event === "activity") return;
+      pending = pending.then(() =>
+        appendEvent(runDirectory, `gigacode.${event}`, fields));
+    },
+    async flush() {
+      await pending;
+    },
   };
 }
 
@@ -88,18 +102,123 @@ function transcriptDirectory(config, runDirectory) {
     : null;
 }
 
-async function requireProducerArtifacts(roundDirectory) {
+function formationPolicy() {
+  return {
+    amendmentOrder: "strict-input-order",
+    conflictResolution: "later-signed-amendment-wins",
+    preserveSourceMeaning: true,
+    doNotTreatDraftAsSigned: true,
+    preserveDocxStructure: true,
+    requireEvidenceForEveryChange: true,
+    requireHumanApprovalBeforeFinalization: true,
+  };
+}
+
+async function requireCurrentContract(roundDirectory) {
   const currentContract = path.join(roundDirectory, "artifacts/current-contract.md");
-  const changeRegister = path.join(roundDirectory, "artifacts/change-register.json");
   const currentInfo = await stat(currentContract);
   if (!currentInfo.isFile() || currentInfo.size < 100) {
     throw new Error("Producer не создал содержательную действующую редакцию договора.");
   }
+  return currentContract;
+}
+
+async function requireChangeArtifacts(roundDirectory) {
+  const changeRegister = path.join(roundDirectory, "artifacts/change-register.json");
+  const changePlan = path.join(roundDirectory, "artifacts/change-plan.json");
   const register = await readJson(changeRegister);
   if (!Array.isArray(register.changes)) {
     throw new Error("change-register.json должен содержать массив changes.");
   }
-  return { currentContract, changeRegister };
+  const plan = await readJson(changePlan);
+  if (!Array.isArray(plan.operations)) {
+    throw new Error("change-plan.json должен содержать массив operations.");
+  }
+  return { changeRegister, changePlan };
+}
+
+async function requireProducerArtifacts(roundDirectory) {
+  const currentContract = await requireCurrentContract(roundDirectory);
+  const { changeRegister, changePlan } = await requireChangeArtifacts(roundDirectory);
+  return { currentContract, changeRegister, changePlan };
+}
+
+async function runProducerStage({
+  stage,
+  expectedStatus,
+  promptName,
+  taskName,
+  roundDirectory,
+  config,
+  runDirectory,
+  onGigacodeEvent,
+  validateArtifacts,
+}) {
+  const result = await runGigacode({
+    config: executorConfig(config),
+    model: config.models.producer,
+    prompt: `${(await loadPrompt(promptName)).trim()}\n\nTask file: ${taskName}`,
+    cwd: roundDirectory,
+    session: `producer-${stage}`,
+    onEvent: onGigacodeEvent,
+    transcriptDirectory: transcriptDirectory(config, runDirectory),
+  });
+  let recovered = false;
+  if (!result.ok) {
+    if (!result.knownCliCancellation) {
+      throw new Error(
+        `Producer ${stage} завершился с ошибкой: ${result.stderr || result.output}`,
+      );
+    }
+    if (result.reportedModels.length > 0) {
+      assertRequestedModel(result, config.models.producer);
+    }
+    recovered = true;
+  }
+  if (!recovered) {
+    assertRequestedModel(result, config.models.producer);
+    let status;
+    try {
+      status = JSON.parse(result.output);
+    } catch {
+      throw new Error(`Producer ${stage} вернул некорректный JSON-статус.`);
+    }
+    if (status.status === "blocked") {
+      return {
+        blocked: status.reason ?? `Producer ${stage} запросил ручное решение.`,
+        artifacts: null,
+      };
+    }
+    if (status.status !== expectedStatus) {
+      throw new Error(
+        `Producer ${stage} не подтвердил ожидаемый статус ${expectedStatus}.`,
+      );
+    }
+  }
+  let artifacts;
+  try {
+    artifacts = await validateArtifacts();
+  } catch (error) {
+    if (recovered) {
+      throw new Error(
+        `GigaCode CLI отменил стадию producer-${stage} после `
+        + `MaxListenersExceededWarning, но результат стадии не готов: ${error.message}`,
+      );
+    }
+    throw error;
+  }
+  if (recovered) {
+    onGigacodeEvent("recovered", {
+      session: `producer-${stage}`,
+      model: config.models.producer,
+      attempt: result.attempt,
+      ok: true,
+      durationMs: result.durationMs,
+      outputChars: result.output.length,
+      reason: "known-gigacode-cli-cancellation",
+    });
+  }
+  return { blocked: null, artifacts };
 }
 
 async function verifyImmutableRunInputs(runDirectory, manifest) {
@@ -132,6 +251,7 @@ async function workspaceFingerprint(roundDirectory, inventory) {
   for (const relative of [
     "artifacts/current-contract.md",
     "artifacts/change-register.json",
+    "artifacts/change-plan.json",
   ]) {
     pieces.push(await sha256File(path.join(roundDirectory, relative)));
   }
@@ -174,6 +294,8 @@ async function runReviewer({
   candidate,
   config,
   runDirectory,
+  evidenceManifestSha256,
+  onGigacodeEvent,
 }) {
   const task = {
     schemaVersion: "contractility.review-task.v1",
@@ -184,10 +306,14 @@ async function runReviewer({
       model: reviewer.model,
       focus: reviewer.focus,
     },
+    policy: formationPolicy(),
+    evidenceManifestSha256,
     paths: {
-      formationRequest: "../../input/formation-request.json",
+      evidenceManifest: "evidence/manifest.json",
+      evidenceDocuments: "evidence/documents",
       currentContract: "artifacts/current-contract.md",
       changeRegister: "artifacts/change-register.json",
+      changePlan: "artifacts/change-plan.json",
       candidateDocx: "candidate.docx",
       renderedPdf: candidate.render ? "qa/candidate.pdf" : null,
       package: "package",
@@ -196,14 +322,14 @@ async function runReviewer({
   const reviewTaskPath = path.join(roundDirectory, `review-task-${reviewer.id}.json`);
   await atomicWriteJson(reviewTaskPath, task);
   const basePrompt = await loadPrompt("reviewer.md");
-  const prompt = `${basePrompt.trim()}\n\nReview task: rounds/${String(round).padStart(2, "0")}/review-task-${reviewer.id}.json\n\n${reviewOutputContract()}`;
+  const prompt = `${basePrompt.trim()}\n\nReview task: review-task-${reviewer.id}.json\n\n${reviewOutputContract()}`;
   let result = await runGigacode({
     config: executorConfig(config),
     model: reviewer.model,
     prompt,
-    cwd: runDirectory,
+    cwd: roundDirectory,
     session: `review:${round}:${reviewer.id}`,
-    onEvent: eventRecorder(runDirectory),
+    onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
   });
   if (!result.ok) {
@@ -224,9 +350,9 @@ async function runReviewer({
         config: executorConfig(config),
         model: reviewer.model,
         prompt: formatRetryPrompt(result.output),
-        cwd: runDirectory,
+        cwd: roundDirectory,
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
-        onEvent: eventRecorder(runDirectory),
+        onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
       });
       if (!result.ok) break;
@@ -236,6 +362,10 @@ async function runReviewer({
   if (lastError || !report) {
     throw new Error(`Reviewer ${reviewer.id} нарушил формат: ${lastError?.message ?? result.stderr}`);
   }
+  await verifyEvidenceWorkspace(
+    path.join(roundDirectory, "evidence"),
+    evidenceManifestSha256,
+  );
   return {
     schemaVersion: "contractility.review-report.v1",
     round,
@@ -263,6 +393,8 @@ async function runSynthesis({
   candidate,
   config,
   runDirectory,
+  evidenceManifestSha256,
+  onGigacodeEvent,
 }) {
   const findingMap = new Map();
   for (const report of reports) {
@@ -279,24 +411,41 @@ async function runSynthesis({
     round,
     candidateSha256: candidate.candidateSha256,
     findingIds: [...findingMap.keys()],
+    policy: formationPolicy(),
+    evidenceManifestSha256,
+    paths: {
+      evidenceManifest: "evidence/manifest.json",
+      evidenceDocuments: "evidence/documents",
+      currentContract: "artifacts/current-contract.md",
+      changeRegister: "artifacts/change-register.json",
+      changePlan: "artifacts/change-plan.json",
+      candidateDocx: "candidate.docx",
+      renderedPdf: candidate.render ? "qa/candidate.pdf" : null,
+      package: "package",
+      untrustedFindings: "untrusted-findings.json",
+    },
   });
   const prompt = `${(await loadPrompt("synthesis.md")).trim()}
 
-Synthesis task: rounds/${String(round).padStart(2, "0")}/synthesis-task.json
-Untrusted findings: rounds/${String(round).padStart(2, "0")}/untrusted-findings.json`;
+Synthesis task: synthesis-task.json
+Untrusted findings: untrusted-findings.json`;
   const result = await runGigacode({
     config: executorConfig(config),
     model: config.models.synthesizer,
     prompt,
-    cwd: runDirectory,
+    cwd: roundDirectory,
     session: `synthesis:${round}`,
-    onEvent: eventRecorder(runDirectory),
+    onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
   });
   if (!result.ok) {
     throw new Error(`Арбитр завершился с ошибкой: ${result.stderr || result.output}`);
   }
   assertRequestedModel(result, config.models.synthesizer);
+  await verifyEvidenceWorkspace(
+    path.join(roundDirectory, "evidence"),
+    evidenceManifestSha256,
+  );
   const synthesis = parseSynthesisResult(result.output, new Set(findingMap.keys()));
   const consensus = {
     schemaVersion: "contractility.review-consensus.v1",
@@ -321,6 +470,9 @@ async function createNextRound(currentDirectory, nextDirectory) {
     cp(path.join(currentDirectory, "artifacts"), path.join(nextDirectory, "artifacts"), {
       recursive: true,
     }),
+    cp(path.join(currentDirectory, "evidence"), path.join(nextDirectory, "evidence"), {
+      recursive: true,
+    }),
   ]);
 }
 
@@ -330,6 +482,11 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
   const runDirectory = path.join(config.storage.runRoot, runId);
   await ensurePrivateDirectory(runDirectory);
   const releaseLock = await acquireRunLock(runDirectory);
+  const agentStatusStore = createAgentStatusStore(runDirectory);
+  const gigacodeEvents = createGigacodeEventRecorder(
+    runDirectory,
+    agentStatusStore,
+  );
   let state = {
     schemaVersion: "contractility.run-state.v1",
     runId,
@@ -355,82 +512,157 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
 
     const firstRoundDirectory = path.join(runDirectory, "rounds/01");
     await ensurePrivateDirectory(path.join(firstRoundDirectory, "artifacts"));
+    const formationRequest = await readJson(
+      path.join(inputDirectory, "formation-request.json"),
+    );
+    const evidenceWorkspace = await materializeEvidenceWorkspace({
+      roundDirectory: firstRoundDirectory,
+      formationRequest,
+      sourceRequestSha256: verifiedCase.manifest.formationRequest.sha256,
+    });
+    const evidenceManifestSha256 = evidenceWorkspace.manifestSha256;
     await extractDocx(
       path.join(inputDirectory, "new-edition.docx"),
       path.join(firstRoundDirectory, "package"),
     );
     const referenceInventory = await packageInventory(path.join(firstRoundDirectory, "package"));
     await atomicWriteJson(path.join(runDirectory, "reference-inventory.json"), referenceInventory);
-    await atomicWriteJson(path.join(firstRoundDirectory, "task.json"), {
-      schemaVersion: "contractility.producer-task.v1",
+    const sharedProducerTask = {
       caseId: verifiedCase.manifest.caseId,
+      policy: formationPolicy(),
+      evidenceManifestSha256,
+    };
+    await atomicWriteJson(path.join(firstRoundDirectory, "reconstruction-task.json"), {
+      schemaVersion: "contractility.producer-reconstruction-task.v1",
+      ...sharedProducerTask,
       paths: {
-        formationRequest: "../../input/formation-request.json",
-        signedDocuments: "../../input/signed",
-        retainedDraft: "../../input/new-edition.docx",
-        package: "package",
-        artifacts: "artifacts",
+        evidenceManifest: "evidence/manifest.json",
+        evidenceDocuments: "evidence/documents",
+        currentContract: "artifacts/current-contract.md",
+        blocker: "artifacts/blocker.json",
       },
     });
-    const producerResult = await runGigacode({
-      config: executorConfig(config),
-      model: config.models.producer,
-      prompt: `${(await loadPrompt("producer.md")).trim()}\n\nTask file: rounds/01/task.json`,
-      cwd: runDirectory,
-      session: "producer",
-      onEvent: eventRecorder(runDirectory),
-      transcriptDirectory: transcriptDirectory(config, runDirectory),
+    state = await writeState(runDirectory, {
+      ...state,
+      status: "reconstructing-contract",
+      round: 1,
     });
-    let recoveredFromCliCancellation = false;
-    if (!producerResult.ok) {
-      if (!producerResult.knownCliCancellation) {
-        throw new Error(`Producer завершился с ошибкой: ${producerResult.stderr || producerResult.output}`);
-      }
-      if (producerResult.reportedModels.length > 0) {
-        assertRequestedModel(producerResult, config.models.producer);
-      }
-      recoveredFromCliCancellation = true;
-    }
-    if (!recoveredFromCliCancellation) {
-      assertRequestedModel(producerResult, config.models.producer);
-      let producerStatus;
-      try {
-        producerStatus = JSON.parse(producerResult.output);
-      } catch {
-        throw new Error("Producer вернул некорректный JSON-статус.");
-      }
-      if (producerStatus.status === "blocked") {
-        state = await writeState(runDirectory, {
-          ...state,
-          status: "blocked",
-          blocker: producerStatus.reason ?? "Producer запросил ручное решение.",
-        });
-        return { runId, runDirectory, state };
-      }
-      if (producerStatus.status !== "candidate-ready") {
-        throw new Error("Producer не подтвердил готовность кандидата.");
-      }
-    }
-    let candidate;
-    try {
-      await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
-      await requireProducerArtifacts(firstRoundDirectory);
-      candidate = await validateCandidate(firstRoundDirectory, referenceInventory, config);
-    } catch (error) {
-      if (recoveredFromCliCancellation) {
-        throw new Error(
-          `GigaCode CLI отменил операцию после MaxListenersExceededWarning, `
-          + `но комплект кандидата не готов: ${error.message}`,
+    const reconstruction = await runProducerStage({
+      stage: "reconstruct",
+      expectedStatus: "reconstruction-ready",
+      promptName: "producer-reconstruct.md",
+      taskName: "reconstruction-task.json",
+      roundDirectory: firstRoundDirectory,
+      config,
+      runDirectory,
+      onGigacodeEvent: gigacodeEvents.record,
+      validateArtifacts: async () => {
+        await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+        await verifyEvidenceWorkspace(
+          path.join(firstRoundDirectory, "evidence"),
+          evidenceManifestSha256,
         );
-      }
-      throw error;
-    }
-    if (recoveredFromCliCancellation) {
-      await appendEvent(runDirectory, "producer.recovered", {
-        reason: "known-gigacode-cli-cancellation",
-        attempt: producerResult.attempt,
+        return requireCurrentContract(firstRoundDirectory);
+      },
+    });
+    if (reconstruction.blocked) {
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "blocked",
+        blocker: reconstruction.blocked,
       });
+      return { runId, runDirectory, state };
     }
+
+    await atomicWriteJson(path.join(firstRoundDirectory, "change-plan-task.json"), {
+      schemaVersion: "contractility.producer-change-plan-task.v1",
+      ...sharedProducerTask,
+      paths: {
+        evidenceManifest: "evidence/manifest.json",
+        evidenceDocuments: "evidence/documents",
+        currentContract: "artifacts/current-contract.md",
+        package: "package",
+        changeRegister: "artifacts/change-register.json",
+        changePlan: "artifacts/change-plan.json",
+        blocker: "artifacts/blocker.json",
+      },
+    });
+    state = await writeState(runDirectory, {
+      ...state,
+      status: "planning-changes",
+      round: 1,
+    });
+    const planning = await runProducerStage({
+      stage: "plan",
+      expectedStatus: "change-plan-ready",
+      promptName: "producer-plan.md",
+      taskName: "change-plan-task.json",
+      roundDirectory: firstRoundDirectory,
+      config,
+      runDirectory,
+      onGigacodeEvent: gigacodeEvents.record,
+      validateArtifacts: async () => {
+        await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+        await verifyEvidenceWorkspace(
+          path.join(firstRoundDirectory, "evidence"),
+          evidenceManifestSha256,
+        );
+        return requireChangeArtifacts(firstRoundDirectory);
+      },
+    });
+    if (planning.blocked) {
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "blocked",
+        blocker: planning.blocked,
+      });
+      return { runId, runDirectory, state };
+    }
+
+    await atomicWriteJson(path.join(firstRoundDirectory, "application-task.json"), {
+      schemaVersion: "contractility.producer-application-task.v1",
+      ...sharedProducerTask,
+      paths: {
+        currentContract: "artifacts/current-contract.md",
+        changeRegister: "artifacts/change-register.json",
+        changePlan: "artifacts/change-plan.json",
+        package: "package",
+        blocker: "artifacts/blocker.json",
+      },
+    });
+    state = await writeState(runDirectory, {
+      ...state,
+      status: "applying-changes",
+      round: 1,
+    });
+    const application = await runProducerStage({
+      stage: "apply",
+      expectedStatus: "candidate-ready",
+      promptName: "producer-apply.md",
+      taskName: "application-task.json",
+      roundDirectory: firstRoundDirectory,
+      config,
+      runDirectory,
+      onGigacodeEvent: gigacodeEvents.record,
+      validateArtifacts: async () => {
+        await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+        await verifyEvidenceWorkspace(
+          path.join(firstRoundDirectory, "evidence"),
+          evidenceManifestSha256,
+        );
+        await requireProducerArtifacts(firstRoundDirectory);
+        return validateCandidate(firstRoundDirectory, referenceInventory, config);
+      },
+    });
+    if (application.blocked) {
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "blocked",
+        blocker: application.blocked,
+      });
+      return { runId, runDirectory, state };
+    }
+    let candidate = application.artifacts;
     state = await writeState(runDirectory, {
       ...state,
       status: "candidate-created",
@@ -459,28 +691,60 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         candidateSha256: candidate.candidateSha256,
       });
       const beforeReviewFingerprint = candidate.workspaceFingerprint;
-      const reports = await mapPool(
+      const reviewDirectory = path.join(roundDirectory, "reviews");
+      await ensurePrivateDirectory(reviewDirectory);
+      const reviewResults = await mapPool(
         config.models.reviewers,
         config.review.maxParallel,
-        (reviewer) => runReviewer({
-          reviewer,
-          round,
-          roundDirectory,
-          candidate,
-          config,
-          runDirectory,
-        }),
+        async (reviewer) => {
+          try {
+            const report = await runReviewer({
+              reviewer,
+              round,
+              roundDirectory,
+              candidate,
+              config,
+              runDirectory,
+              evidenceManifestSha256,
+              onGigacodeEvent: gigacodeEvents.record,
+            });
+            await atomicWriteJson(
+              path.join(reviewDirectory, `${report.reviewer.id}.json`),
+              report,
+            );
+            return { ok: true, reviewer, report };
+          } catch (error) {
+            return {
+              ok: false,
+              reviewer,
+              error: error.message ?? String(error),
+            };
+          }
+        },
       );
+      const requiredFailures = reviewResults.filter(
+        (result) => !result.ok && result.reviewer.required !== false,
+      );
+      if (requiredFailures.length > 0) {
+        throw new Error(
+          `Обязательные reviewer завершились с ошибкой:\n${requiredFailures
+            .map((result) => `${result.reviewer.id}: ${result.error}`)
+            .join("\n")}`,
+        );
+      }
+      const reports = reviewResults
+        .filter((result) => result.ok)
+        .map((result) => result.report);
       await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+      await verifyEvidenceWorkspace(
+        path.join(roundDirectory, "evidence"),
+        evidenceManifestSha256,
+      );
       const afterReviewInventory = await packageInventory(path.join(roundDirectory, "package"));
       const afterReviewFingerprint = await workspaceFingerprint(roundDirectory, afterReviewInventory);
       if (afterReviewFingerprint !== beforeReviewFingerprint) {
         throw new Error("Read-only reviewer изменил кандидат или обязательные артефакты.");
       }
-      const reviewDirectory = path.join(roundDirectory, "reviews");
-      await ensurePrivateDirectory(reviewDirectory);
-      await Promise.all(reports.map((report) =>
-        atomicWriteJson(path.join(reviewDirectory, `${report.reviewer.id}.json`), report)));
       const findingsSha256 = findingFingerprint(reports);
       const consensus = await runSynthesis({
         round,
@@ -489,6 +753,8 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         candidate,
         config,
         runDirectory,
+        evidenceManifestSha256,
+        onGigacodeEvent: gigacodeEvents.record,
       });
       await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
       if (consensus.status === "blocked") {
@@ -556,7 +822,12 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     }).catch(() => state);
     throw Object.assign(error, { runId, runDirectory, state });
   } finally {
-    await releaseLock();
+    try {
+      await gigacodeEvents.flush();
+      await agentStatusStore.flush();
+    } finally {
+      await releaseLock();
+    }
   }
 }
 

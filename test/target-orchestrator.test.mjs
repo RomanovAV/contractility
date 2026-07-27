@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -33,6 +34,24 @@ const fakeGigacode = path.resolve("test-support/fake-gigacode.mjs");
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
+}
+
+async function exists(filePath) {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(check, timeoutMs = 5000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const value = await check();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Условие теста не выполнено за ${timeoutMs} мс.`);
 }
 
 async function createMinimalDocx(root) {
@@ -244,17 +263,76 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     },
     outputRoot: path.join(temporary, "cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "producer-cancel";
+  process.env.FAKE_GIGACODE_MODE = "producer-cancel-slow-review";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
     });
-    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
-    assert.equal(run.state.status, "awaiting-human-approval");
-    assert.match(
-      await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8"),
-      /"event":"producer\.recovered"/,
+    let createdRun;
+    const pendingRun = createAndRun({
+      caseDirectory: prepared.caseDirectory,
+      config,
+      onRunCreated(value) {
+        createdRun = value;
+      },
+    });
+    await waitFor(() => createdRun);
+    const firstReviewPath = path.join(
+      createdRun.runDirectory,
+      "rounds/01/reviews/legal-a.json",
     );
+    const slowReviewPath = path.join(
+      createdRun.runDirectory,
+      "rounds/01/reviews/legal-c.json",
+    );
+    await waitFor(() => exists(firstReviewPath));
+    assert.equal(await exists(slowReviewPath), false);
+    const run = await pendingRun;
+    assert.equal(run.state.status, "awaiting-human-approval");
+    const evidenceManifest = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/evidence/manifest.json"),
+      "utf8",
+    ));
+    assert.equal(evidenceManifest.documentCount, 2);
+    assert.deepEqual(
+      evidenceManifest.documents.map((document) => document.id),
+      ["document-1", "document-2"],
+    );
+    assert.match(
+      await readFile(
+        path.join(run.runDirectory, "rounds/01/evidence", evidenceManifest.documents[1].path),
+        "utf8",
+      ),
+      /## Страница 1\n\nИзменение/,
+    );
+    const producerTask = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/reconstruction-task.json"),
+      "utf8",
+    ));
+    assert.ok(Object.values(producerTask.paths).every((value) => !value.includes("..")));
+    assert.equal(producerTask.policy.conflictResolution, "later-signed-amendment-wins");
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(events, /"event":"gigacode\.recovered"/);
+    assert.doesNotMatch(events, /"event":"gigacode\.activity"/);
+    for (const line of events.trim().split("\n")) {
+      assert.doesNotThrow(() => JSON.parse(line));
+    }
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.ok(agentStatuses.some((status) => status.role === "producer-reconstruct"));
+    assert.ok(agentStatuses.some((status) =>
+      status.role === "producer-apply"
+      && status.phase === "recovered"
+      && status.status === "completed"));
+    assert.ok(agentStatuses.some((status) =>
+      status.reviewerId === "legal-c" && status.status === "completed"));
+    assert.ok(agentStatuses.every((status) => status.attempt === 1));
     await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
     await assert.rejects(() => approveRun({
       runDirectory: run.runDirectory,
@@ -336,6 +414,16 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
       "utf8",
     );
     assert.match(finalXml, /исправлено/);
+    assert.equal(
+      await readFile(
+        path.join(run.runDirectory, "rounds/02/evidence/manifest.json"),
+        "utf8",
+      ),
+      await readFile(
+        path.join(run.runDirectory, "rounds/01/evidence/manifest.json"),
+        "utf8",
+      ),
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

@@ -155,10 +155,14 @@ npm start
 
 - локально передаёт PDF, DOCX и formation request на loopback-сервер;
 - повторно проверяет SHA-256 и создаёт неизменяемый case bundle;
-- запускает producer и показывает состояние раундов;
+- запускает producer тремя наблюдаемыми стадиями: реконструкция договора,
+  планирование изменений и применение плана к DOCX;
+- создаёт внутри каждого раунда локальный `evidence/` с OCR-текстом по
+  документам и страницам и запускает агентов из каталога этого раунда;
 - каждую секунду показывает последнюю активность GigaCode: этап, модель,
   сессию, время и результат ответа без публикации его содержимого в API;
-- отображает пять независимых reviewer-отчётов и решение арбитра;
+- сохраняет и отображает каждый независимый reviewer-отчёт сразу после его
+  готовности, не ожидая остальных рецензентов;
 - позволяет скачать кандидат DOCX и его PDF-превью;
 - принимает ФИО проверяющего и подтверждает точные хеши;
 - финализирует и отдаёт готовый DOCX.
@@ -193,11 +197,15 @@ SHA-256. Временная staging-копия удаляется после с�
 - `*.summary.json` — модель, роль, длительность, код завершения и таймауты.
 
 ```bash
-tail -f data/runs/RUN_ID/transcripts/producer.attempt-1.stdout.ndjson
-tail -f data/runs/RUN_ID/transcripts/producer.attempt-1.stderr.log
+tail -f data/runs/RUN_ID/transcripts/producer-reconstruct.attempt-1.stdout.ndjson
+tail -f data/runs/RUN_ID/transcripts/producer-plan.attempt-1.stdout.ndjson
+tail -f data/runs/RUN_ID/transcripts/producer-apply.attempt-1.stdout.ndjson
 ```
 
 Каждый поток ограничен 2 МБ, каталог имеет права `0700`, файлы — `0600`.
+Live-состояние каждой сессии хранится отдельно в `agent-status/`, а
+`events.ndjson` содержит только значимые аудиторские события и не растёт на
+каждом фрагменте stdout/stderr.
 После диагностики верните `retainAgentTranscripts` в `false`. Уже запущенный
 процесс нельзя начать логировать задним числом.
 

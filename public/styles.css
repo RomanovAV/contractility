@@ -226,6 +226,7 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .reviewer-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .reviewer-card strong { font-size: 10px; line-height: 1.35; }
 .reviewer-verdict { flex: 0 0 auto; padding: 3px 6px; border-radius: 999px; background: #edf0ee; color: var(--muted); font-size: 8px; font-weight: 800; }
+.reviewer-verdict.active { background: var(--amber-soft); color: var(--amber); }
 .reviewer-verdict.good { background: var(--accent-soft); color: var(--accent); }
 .reviewer-verdict.failed { background: #fce8e5; color: var(--danger); }
 .reviewer-model { display: block; overflow: hidden; color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }

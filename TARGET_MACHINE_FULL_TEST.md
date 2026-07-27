@@ -119,7 +119,8 @@ http://127.0.0.1:4317
 
 - передаёт файлы только локальному серверу `127.0.0.1`;
 - повторно сверяет SHA-256 и создаёт case;
-- запускает producer;
+- запускает три стадии producer: реконструкцию, планирование изменений и
+  применение плана к DOCX;
 - показывает последнюю активность GigaCode с временем, моделью и ролью агента;
 - показывает текущий раунд и пять параллельных reviewer-ролей;
 - отображает замечания и решение synthesis-арбитра;
@@ -196,12 +197,17 @@ CLI следует использовать как резервный интер
 data/runs/RUN_ID/transcripts/
 ```
 
-Наблюдение за producer в реальном времени:
+Наблюдение за стадиями producer в реальном времени:
 
 ```bash
-tail -f "$RUN_DIR/transcripts/producer.attempt-1.stdout.ndjson"
-tail -f "$RUN_DIR/transcripts/producer.attempt-1.stderr.log"
+tail -f "$RUN_DIR/transcripts/producer-reconstruct.attempt-1.stdout.ndjson"
+tail -f "$RUN_DIR/transcripts/producer-plan.attempt-1.stdout.ndjson"
+tail -f "$RUN_DIR/transcripts/producer-apply.attempt-1.stdout.ndjson"
 ```
+
+Текущее состояние каждой сессии находится в `$RUN_DIR/agent-status/`.
+`events.ndjson` содержит только значимые аудиторские события, без записи
+каждого фрагмента stdout/stderr.
 
 Логи могут содержать сведения из договора. Каждый поток ограничен 2 МБ и
 записывается с правами `0600`. После диагностики верните параметр в `false`.
@@ -213,7 +219,7 @@ tail -f "$RUN_DIR/transcripts/producer.attempt-1.stderr.log"
 - `npm test` завершился без ошибок;
 - browser OCR обработал весь комплект и сформировал formation request;
 - UI повторно передал файлы localhost-серверу и подтвердил их SHA-256;
-- producer создал кандидат и обязательные артефакты;
+- все три стадии producer создали реконструкцию, план изменений и кандидат;
 - все пять reviewer-ролей создали отчёты хотя бы в одном раунде;
 - synthesis-арбитр сформировал `consensus.json`;
 - UI дошёл до состояния «Нужна проверка»;

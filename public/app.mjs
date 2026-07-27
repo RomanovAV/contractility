@@ -1138,6 +1138,9 @@ function renderRunStages(runState) {
     uploading: ["active", "", "", "", ""],
     created: ["active", "", "", "", ""],
     "inputs-verified": ["complete", "active", "", "", ""],
+    "reconstructing-contract": ["complete", "active", "", "", ""],
+    "planning-changes": ["complete", "active", "", "", ""],
+    "applying-changes": ["complete", "active", "", "", ""],
     "candidate-created": ["complete", "complete", "active", "", ""],
     reviewing: ["complete", "complete", "active", "", ""],
     fixing: ["complete", "complete", "active", "", ""],
@@ -1158,7 +1161,9 @@ function reviewerTitle(id) {
 }
 
 function gigacodeSessionLabel(session) {
-  if (session === "producer") return "Формирование кандидата";
+  if (session === "producer-reconstruct") return "Реконструкция договора";
+  if (session === "producer-plan") return "Планирование изменений";
+  if (session === "producer-apply") return "Применение изменений к DOCX";
   if (session?.startsWith("synthesis:")) return "Арбитр";
   if (session?.startsWith("review-format:")) return "Исправление формата reviewer";
   if (session?.startsWith("review:")) {
@@ -1185,11 +1190,13 @@ function renderGigacodeStatus(status) {
     activity: status.source === "stderr"
       ? "Получено служебное сообщение"
       : "Получен новый фрагмент ответа",
+    retrying: "Повторная попытка GigaCode",
+    recovered: "Результат восстановлен после отмены GigaCode CLI",
     finished: status.knownCliCancellation
       ? "Известная отмена GigaCode CLI — проверяем сохранённый кандидат"
       : status.ok ? "Ответ GigaCode получен" : "Ответ завершился с ошибкой",
   };
-  const active = ["prepared", "started", "activity"].includes(status.phase);
+  const active = ["prepared", "started", "activity", "retrying"].includes(status.phase);
   container.classList.add(
     active || status.knownCliCancellation
       ? "active"
@@ -1213,6 +1220,14 @@ function renderGigacodeStatus(status) {
 function renderReviewers(run) {
   elements["reviewers-grid"].replaceChildren();
   const reports = new Map((run?.reviews ?? []).map((report) => [report.reviewer.id, report]));
+  const agentStatuses = new Map();
+  for (const agent of run?.agents ?? []) {
+    if (!agent.reviewerId || agent.round !== run?.state?.round) continue;
+    const previous = agentStatuses.get(agent.reviewerId);
+    if (!previous || String(agent.updatedAt) > String(previous.updatedAt)) {
+      agentStatuses.set(agent.reviewerId, agent);
+    }
+  }
   const configured = state.targetSession?.target?.models?.reviewers ?? [];
   const reviewers = configured.length > 0
     ? configured
@@ -1223,6 +1238,7 @@ function renderReviewers(run) {
 
   for (const reviewer of reviewers) {
     const report = reports.get(reviewer.id);
+    const agent = agentStatuses.get(reviewer.id);
     const card = globalThis.document.createElement("article");
     card.className = "reviewer-card";
     const header = globalThis.document.createElement("header");
@@ -1231,7 +1247,23 @@ function renderReviewers(run) {
     const verdict = globalThis.document.createElement("span");
     verdict.className = "reviewer-verdict";
     if (!report) {
-      verdict.textContent = "Ожидание";
+      if (agent?.status === "failed") {
+        verdict.classList.add("failed");
+        verdict.textContent = "Ошибка";
+      } else if (agent?.status === "running") {
+        verdict.classList.add("active");
+        verdict.textContent = "В работе";
+      } else if (agent?.status === "retrying") {
+        verdict.classList.add("active");
+        verdict.textContent = "Повтор";
+      } else if (agent?.status === "starting") {
+        verdict.classList.add("active");
+        verdict.textContent = "Запуск";
+      } else if (agent?.status === "completed") {
+        verdict.textContent = "Сохранение";
+      } else {
+        verdict.textContent = "Ожидание";
+      }
     } else if (report.verdict === "pass") {
       verdict.classList.add("good");
       verdict.textContent = "Пройдено";
@@ -1242,7 +1274,14 @@ function renderReviewers(run) {
     header.append(title, verdict);
     const model = globalThis.document.createElement("span");
     model.className = "reviewer-model";
-    model.textContent = reviewer.model ?? report?.reviewer?.requestedModel ?? "модель не указана";
+    const activity = agent?.lastActivityAt
+      ? new Date(agent.lastActivityAt).toLocaleTimeString("ru-RU")
+      : null;
+    model.textContent = [
+      reviewer.model ?? report?.reviewer?.requestedModel ?? "модель не указана",
+      agent?.attempt ? `попытка ${agent.attempt}` : null,
+      activity ? `активность ${activity}` : null,
+    ].filter(Boolean).join(" · ");
     card.append(header, model);
 
     if (report?.findings?.length > 0) {

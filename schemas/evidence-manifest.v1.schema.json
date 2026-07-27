@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contractility.evidence-manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceRequestSha256",
+    "documentCount",
+    "documents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "contractility.evidence-manifest.v1" },
+    "sourceRequestSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "documentCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "documents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "order",
+          "originalName",
+          "sourceSha256",
+          "path",
+          "pageCount",
+          "textSha256"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "role": {
+            "enum": ["contract", "additional-agreement"]
+          },
+          "order": { "type": "integer", "minimum": 1 },
+          "originalName": { "type": "string", "minLength": 1 },
+          "sourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^documents/[^/]+\\.md$"
+          },
+          "pageCount": { "type": "integer", "minimum": 1 },
+          "textSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

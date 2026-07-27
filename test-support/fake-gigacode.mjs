@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 const args = process.argv.slice(2);
 const valueAfter = (name) => {
@@ -10,12 +11,6 @@ const valueAfter = (name) => {
 const model = valueAfter("--model");
 const prompt = valueAfter("-p");
 const mode = process.env.FAKE_GIGACODE_MODE ?? "pass";
-
-async function latestRoundDirectory() {
-  const roundsRoot = path.join(process.cwd(), "rounds");
-  const rounds = (await readdir(roundsRoot)).filter((name) => /^\d+$/.test(name)).sort();
-  return path.join(roundsRoot, rounds.at(-1));
-}
 
 function emit(result) {
   process.stdout.write(`${JSON.stringify({
@@ -34,18 +29,39 @@ function emit(result) {
 
 if (prompt.includes('Return exactly {"status":"ok"}')) {
   emit({ status: "ok" });
-} else if (prompt.includes("produce the first candidate")) {
-  const artifacts = path.join(process.cwd(), "rounds/01/artifacts");
+} else if (prompt.includes("reconstruct the current contract from signed OCR evidence")) {
+  const task = JSON.parse(
+    await readFile(path.join(process.cwd(), "reconstruction-task.json"), "utf8"),
+  );
+  await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
+  const artifacts = path.join(process.cwd(), "artifacts");
   await mkdir(artifacts, { recursive: true });
   await writeFile(
     path.join(artifacts, "current-contract.md"),
     `${"# Действующая редакция\n\nПроверяемая тестовая редакция договора. ".repeat(8)}\n`,
   );
+  emit({ status: "reconstruction-ready" });
+} else if (prompt.includes("plan contract changes against the reconstructed current contract")) {
+  const task = JSON.parse(
+    await readFile(path.join(process.cwd(), "change-plan-task.json"), "utf8"),
+  );
+  await readFile(path.join(process.cwd(), task.paths.currentContract), "utf8");
+  const artifacts = path.join(process.cwd(), "artifacts");
   await writeFile(
     path.join(artifacts, "change-register.json"),
     `${JSON.stringify({ changes: [] }, null, 2)}\n`,
   );
-  if (mode === "producer-cancel") {
+  await writeFile(
+    path.join(artifacts, "change-plan.json"),
+    `${JSON.stringify({ operations: [] }, null, 2)}\n`,
+  );
+  emit({ status: "change-plan-ready" });
+} else if (prompt.includes("apply the prepared change plan to the retained DOCX package")) {
+  const task = JSON.parse(
+    await readFile(path.join(process.cwd(), "application-task.json"), "utf8"),
+  );
+  await readFile(path.join(process.cwd(), task.paths.changePlan), "utf8");
+  if (mode.includes("producer-cancel")) {
     process.stdout.write(`${JSON.stringify({
       type: "system",
       session_id: `fake-${model}`,
@@ -61,8 +77,14 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
     emit({ status: "candidate-ready" });
   }
 } else if (prompt.includes("independent read-only review")) {
+  const taskName = prompt.match(/Review task: ([^\s]+)/)?.[1];
+  const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
+  await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
+  if (mode.includes("slow-review") && model === "review-model-c") {
+    await delay(1000);
+  }
   if (mode === "fix-once") {
-    const roundDirectory = await latestRoundDirectory();
+    const roundDirectory = process.cwd();
     const xml = await readFile(path.join(roundDirectory, "package/word/document.xml"), "utf8");
     if (!xml.includes("исправлено")) {
       emit({
@@ -88,7 +110,7 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
     emit({ verdict: "pass", findings: [] });
   }
 } else if (prompt.includes("independent review synthesis")) {
-  const roundDirectory = await latestRoundDirectory();
+  const roundDirectory = process.cwd();
   const task = JSON.parse(
     await readFile(path.join(roundDirectory, "synthesis-task.json"), "utf8"),
   );

@@ -167,6 +167,9 @@ function stateLabel(status) {
   const labels = {
     created: "Создание запуска",
     "inputs-verified": "Входы проверены",
+    "reconstructing-contract": "Реконструкция действующего договора",
+    "planning-changes": "Планирование изменений",
+    "applying-changes": "Применение изменений к DOCX",
     "candidate-created": "Кандидат сформирован",
     reviewing: "Параллельное ревью",
     fixing: "Исправление замечаний",
@@ -254,14 +257,52 @@ async function readLastGigacodeStatus(runDirectory) {
   return null;
 }
 
+async function readAgentStatuses(runDirectory) {
+  const directory = path.join(runDirectory, "agent-status");
+  const statuses = [];
+  try {
+    for (const name of await readdir(directory)) {
+      if (!name.endsWith(".json")) continue;
+      try {
+        statuses.push(await readJson(path.join(directory, name)));
+      } catch {
+        // A status file is replaced atomically; ignore unrelated or invalid files.
+      }
+    }
+  } catch {
+    return [];
+  }
+  return statuses.sort((left, right) =>
+    String(left.updatedAt ?? "").localeCompare(String(right.updatedAt ?? "")));
+}
+
+function gigacodeStatusFromAgents(agents) {
+  const latest = agents.at(-1);
+  if (!latest) return null;
+  return {
+    at: latest.updatedAt ?? null,
+    phase: latest.phase ?? null,
+    session: latest.session ?? null,
+    model: latest.model ?? null,
+    source: null,
+    ok: latest.ok,
+    knownCliCancellation: false,
+    durationMs: latest.durationMs,
+    outputChars: latest.outputChars,
+  };
+}
+
 async function readRunSummary(runDirectory) {
   const state = await readJson(path.join(runDirectory, "state.json"));
   const round = await readCurrentRound(runDirectory, state);
+  const agents = await readAgentStatuses(runDirectory);
   return {
     state,
     stateLabel: stateLabel(state.status),
     ...round,
-    gigacodeStatus: await readLastGigacodeStatus(runDirectory),
+    agents,
+    gigacodeStatus: gigacodeStatusFromAgents(agents)
+      ?? await readLastGigacodeStatus(runDirectory),
   };
 }
 

@@ -27,9 +27,13 @@ export async function ensurePrivateDirectory(directory) {
 }
 
 export async function atomicWriteJson(filePath, value) {
+  await atomicWriteText(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+export async function atomicWriteText(filePath, value) {
   await ensurePrivateDirectory(path.dirname(filePath));
   const temporary = `${filePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+  await writeFile(temporary, String(value), {
     encoding: "utf8",
     mode: 0o600,
   });
@@ -107,4 +111,3 @@ export async function requireRegularFile(filePath) {
   }
   return info;
 }
-

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contractility.agent-status.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "session",
+    "role",
+    "status",
+    "phase",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "contractility.agent-status.v1" },
+    "session": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "minLength": 1 },
+    "round": { "type": ["integer", "null"], "minimum": 1 },
+    "reviewerId": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "status": {
+      "enum": ["starting", "running", "retrying", "completed", "failed"]
+    },
+    "phase": {
+      "enum": ["prepared", "started", "activity", "retrying", "finished", "recovered"]
+    },
+    "attempt": { "type": ["integer", "null"], "minimum": 1 },
+    "startedAt": { "type": ["string", "null"] },
+    "lastActivityAt": { "type": ["string", "null"] },
+    "finishedAt": { "type": ["string", "null"] },
+    "durationMs": { "type": ["number", "null"], "minimum": 0 },
+    "outputChars": { "type": ["integer", "null"], "minimum": 0 },
+    "ok": { "type": ["boolean", "null"] },
+    "errorKind": { "type": ["string", "null"] },
+    "updatedAt": { "type": "string" }
+  }
+}

@@ -11,6 +11,9 @@
       "enum": [
         "created",
         "inputs-verified",
+        "reconstructing-contract",
+        "planning-changes",
+        "applying-changes",
         "candidate-created",
         "reviewing",
         "fixing",
@@ -25,4 +28,3 @@
     "findingsSha256": { "type": "string" }
   }
 }
-
