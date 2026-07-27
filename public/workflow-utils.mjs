@@ -67,6 +67,31 @@ function requireCompleteOcr(ocrResult) {
   }
 }
 
+function createSemanticPage(page) {
+  const result = {
+    number: page.number,
+    text: String(page.text ?? ""),
+  };
+  if (page.source) result.source = page.source;
+  if (Number.isFinite(page.confidence)) result.confidence = page.confidence;
+  if (page.manuallyEdited) result.manuallyEdited = true;
+  return result;
+}
+
+export function createSemanticSignedDocuments(documents) {
+  return documents.map((document) => ({
+    id: document.id,
+    role: document.role,
+    label: document.label,
+    order: document.order,
+    file: { ...document.file },
+    pageCount: document.pageCount ?? document.pages.length,
+    complete: document.complete,
+    textFormat: "plain-text-by-page",
+    pages: document.pages.map(createSemanticPage),
+  }));
+}
+
 export function buildFormationRequest({
   ocrResult,
   draftAgreement,
@@ -81,7 +106,7 @@ export function buildFormationRequest({
     schemaVersion: "contractility.formation-request.v1",
     createdAt,
     inputs: {
-      signedDocuments: ocrResult.documents,
+      signedDocuments: createSemanticSignedDocuments(ocrResult.documents),
       newAgreementEdition: {
         role: "proposed-additional-agreement",
         file: {

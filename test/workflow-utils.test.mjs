@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildFormationRequest,
   createFormationTextExport,
+  createSemanticSignedDocuments,
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeDocumentOrder,
@@ -125,6 +126,73 @@ test("buildFormationRequest records the four-stage legal workflow and DOCX ident
   assert.equal(request.rules.proposedAgreementRole, "declared-change-intent-and-output-template");
   assert.equal(request.rules.requireStructuralSimilarityToCurrentContract, false);
   assert.equal(request.rules.requireHumanApprovalBeforeFinalization, true);
+});
+
+test("createSemanticSignedDocuments keeps continuous page text and removes OCR layout details", () => {
+  const documents = createSemanticSignedDocuments([{
+    id: "contract",
+    role: "contract",
+    label: "Исходный договор",
+    order: 1,
+    file: { name: "Договор.pdf", sha256: "contract-hash" },
+    complete: true,
+    pages: [{
+      number: 1,
+      source: "tesseract",
+      text: "1. Предмет договора\nпродолжается на следующей строке.",
+      confidence: 91.5,
+      manuallyEdited: true,
+      lines: [{
+        text: "1. Предмет договора",
+        bbox: { x: 0.1, y: 0.2, width: 0.5, height: 0.03 },
+      }],
+      renderedWidth: 1800,
+      renderedHeight: 2600,
+    }],
+  }]);
+
+  assert.deepEqual(documents, [{
+    id: "contract",
+    role: "contract",
+    label: "Исходный договор",
+    order: 1,
+    file: { name: "Договор.pdf", sha256: "contract-hash" },
+    pageCount: 1,
+    complete: true,
+    textFormat: "plain-text-by-page",
+    pages: [{
+      number: 1,
+      text: "1. Предмет договора\nпродолжается на следующей строке.",
+      source: "tesseract",
+      confidence: 91.5,
+      manuallyEdited: true,
+    }],
+  }]);
+});
+
+test("buildFormationRequest excludes line coordinates from the saved model input", () => {
+  const ocrResult = completeOcrResult();
+  ocrResult.documents[0].pages[0].lines = [{
+    text: "Исходная редакция договора",
+    bbox: { x: 0.1, y: 0.2, width: 0.5, height: 0.03 },
+  }];
+
+  const request = buildFormationRequest({
+    ocrResult,
+    draftAgreement: {
+      name: "Новая редакция.docx",
+      size: 2048,
+      sha256: "draft-hash",
+    },
+  });
+
+  assert.equal(request.inputs.signedDocuments[0].textFormat, "plain-text-by-page");
+  assert.equal(
+    request.inputs.signedDocuments[0].pages[0].text,
+    "Исходная редакция договора",
+  );
+  assert.equal("lines" in request.inputs.signedDocuments[0].pages[0], false);
+  assert.equal(JSON.stringify(request).includes('"bbox"'), false);
 });
 
 test("buildFormationRequest rejects incomplete OCR and missing DOCX", () => {
