@@ -108,17 +108,6 @@ async function doctor(options) {
       checks.push({ name, ok: false, value: error.message });
     }
   }
-  if (config.tools?.requireSoffice) {
-    try {
-      checks.push({
-        name: "LibreOffice",
-        ok: true,
-        value: await commandVersion(config.tools.sofficeCommand ?? "soffice"),
-      });
-    } catch (error) {
-      checks.push({ name: "LibreOffice", ok: false, value: error.message });
-    }
-  }
   if (options.smoke && checks.every((check) => check.ok)) {
     const smokeDirectory = await mkdtemp(path.join(os.tmpdir(), "contractility-smoke-"));
     for (const model of requestedModels(config)) {

@@ -14,7 +14,6 @@ import {
   inventoryFingerprint,
   packDocx,
   packageInventory,
-  renderDocx,
   validateExtractedPackage,
 } from "./docx.mjs";
 import {
@@ -384,7 +383,7 @@ async function workspaceFingerprint(roundDirectory, inventory) {
   return sha256Text(pieces.join(":"));
 }
 
-async function validateCandidate(roundDirectory, referenceInventory, config) {
+async function validateCandidate(roundDirectory, referenceInventory) {
   const packageDirectory = path.join(roundDirectory, "package");
   await validateExtractedPackage(packageDirectory);
   const inventory = await packageInventory(packageDirectory);
@@ -396,19 +395,10 @@ async function validateCandidate(roundDirectory, referenceInventory, config) {
   }
   const candidatePath = path.join(roundDirectory, "candidate.docx");
   const candidateSha256 = await packDocx(packageDirectory, candidatePath);
-  let render = null;
-  if (config.tools?.requireSoffice) {
-    render = await renderDocx(
-      candidatePath,
-      path.join(roundDirectory, "qa"),
-      config.tools.sofficeCommand ?? "soffice",
-    );
-  }
   return {
     candidatePath,
     candidateSha256,
     inventory,
-    render,
     workspaceFingerprint: await workspaceFingerprint(roundDirectory, inventory),
   };
 }
@@ -441,7 +431,6 @@ async function runReviewer({
       changeRegister: "artifacts/change-register.json",
       changePlan: "artifacts/change-plan.json",
       candidateDocx: "candidate.docx",
-      renderedPdf: candidate.render ? "qa/candidate.pdf" : null,
       package: "package",
     },
   };
@@ -546,7 +535,6 @@ async function runSynthesis({
       changeRegister: "artifacts/change-register.json",
       changePlan: "artifacts/change-plan.json",
       candidateDocx: "candidate.docx",
-      renderedPdf: candidate.render ? "qa/candidate.pdf" : null,
       package: "package",
       untrustedFindings: "untrusted-findings.json",
     },
@@ -777,7 +765,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           evidenceManifestSha256,
         );
         await requireProducerArtifacts(firstRoundDirectory);
-        return validateCandidate(firstRoundDirectory, referenceInventory, config);
+        return validateCandidate(firstRoundDirectory, referenceInventory);
       },
     });
     if (application.blocked) {
@@ -808,7 +796,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           path.join(runDirectory, `rounds/${String(round - 1).padStart(2, "0")}`),
           roundDirectory,
         );
-        candidate = await validateCandidate(roundDirectory, referenceInventory, config);
+        candidate = await validateCandidate(roundDirectory, referenceInventory);
       }
       state = await writeState(runDirectory, {
         ...state,
@@ -894,7 +882,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         return { runId, runDirectory, state };
       }
       if (consensus.status === "done") {
-        const doneCandidate = await validateCandidate(roundDirectory, referenceInventory, config);
+        const doneCandidate = await validateCandidate(roundDirectory, referenceInventory);
         if (doneCandidate.workspaceFingerprint !== beforeReviewFingerprint) {
           throw new Error("Арбитр изменил кандидат при status=done.");
         }
@@ -910,7 +898,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       }
 
       await requireProducerArtifacts(roundDirectory);
-      const fixedCandidate = await validateCandidate(roundDirectory, referenceInventory, config);
+      const fixedCandidate = await validateCandidate(roundDirectory, referenceInventory);
       const stallKey = `${fixedCandidate.workspaceFingerprint}:${findingsSha256}`;
       stallCount = stallKey === previousStallKey ? stallCount + 1 : 1;
       previousStallKey = stallKey;

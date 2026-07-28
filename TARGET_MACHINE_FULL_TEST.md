@@ -56,7 +56,6 @@ node --version
 gigacode --version
 zip -v
 unzip -v
-soffice --version
 ```
 
 Требуется Node.js 22 или новее. GigaCode CLI должен быть уже установлен,
@@ -239,4 +238,4 @@ tail -f "$RUN_DIR/transcripts/producer-apply.attempt-1.stdout.ndjson"
 - `approval/approval.json`;
 - каталог `final/`;
 - использованный `config/target.json` без секретов авторизации;
-- версии `node`, `gigacode` и `soffice`.
+- версии `node` и `gigacode`.

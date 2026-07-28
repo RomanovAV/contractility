@@ -589,19 +589,6 @@ export function createUiWorkflowApi({
       );
       return;
     }
-    if (kind === "preview") {
-      if (!Number.isInteger(state.round) || state.round < 1) {
-        throw new HttpError(409, "PDF-превью ещё не готово.");
-      }
-      await sendFile(
-        response,
-        securityHeaders,
-        safeJoin(runDirectory, `rounds/${String(state.round).padStart(2, "0")}/qa/candidate.pdf`),
-        "application/pdf",
-        "candidate-additional-agreement.pdf",
-      );
-      return;
-    }
     if (kind === "final") {
       if (state.status !== "finalized" || !state.finalPath) {
         throw new HttpError(409, "Финальный DOCX ещё не готов.");

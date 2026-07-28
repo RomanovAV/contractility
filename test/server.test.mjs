@@ -57,6 +57,7 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /Пять рецензентов/);
   assert.match(indexHtml, /id="approve-candidate"/);
   assert.match(indexHtml, /id="download-final"/);
+  assert.doesNotMatch(indexHtml, /download-preview|превью PDF/i);
   assert.match(indexHtml, />\+ Добавить документы</);
   assert.match(indexHtml, />Сбросить</);
 
@@ -123,9 +124,6 @@ test("workflow API protects mutations and prepares a verified local case", async
       formatRetries: 0,
       stallRounds: 2,
     },
-    tools: {
-      requireSoffice: false,
-    },
     storage: {
       runRoot: "../runs",
       retainAgentTranscripts: false,
@@ -136,11 +134,9 @@ test("workflow API protects mutations and prepares a verified local case", async
     const runDirectory = path.join(config.storage.runRoot, runId);
     const roundDirectory = path.join(runDirectory, "rounds", "01");
     await mkdir(path.join(roundDirectory, "reviews"), { recursive: true });
-    await mkdir(path.join(roundDirectory, "qa"), { recursive: true });
     const candidate = Buffer.from("candidate docx");
     const candidateSha256 = sha256(candidate);
     await writeFile(path.join(roundDirectory, "candidate.docx"), candidate);
-    await writeFile(path.join(roundDirectory, "qa", "candidate.pdf"), Buffer.from("%PDF preview"));
     await writeFile(path.join(roundDirectory, "reviews", "review-a.json"), `${JSON.stringify({
       reviewer: {
         id: "review-a",
@@ -361,6 +357,12 @@ test("workflow API protects mutations and prepares a verified local case", async
   assert.equal(job.run.gigacodeStatus.phase, "finished");
   assert.equal(job.run.gigacodeStatus.model, "synthesizer-model");
   assert.equal(job.run.gigacodeStatus.outputChars, 240);
+
+  const removedPreviewResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/files/preview`,
+    { headers: { "X-Contractility-Token": session.token } },
+  );
+  assert.equal(removedPreviewResponse.status, 404);
 
   const approveResponse = await fetch(
     `${origin}/api/workflow/runs/${job.runId}/approve`,

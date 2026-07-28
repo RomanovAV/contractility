@@ -105,7 +105,6 @@ function targetConfig(runRoot, { passEnvironment = [] } = {}) {
       formatRetries: 1,
       stallRounds: 2,
     },
-    tools: { requireSoffice: false },
     storage: { runRoot, retainAgentTranscripts: false },
   };
 }

@@ -9,7 +9,6 @@ import {
   stat,
 } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { safeRelativePath, sha256File, sha256Text } from "./fs-utils.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -155,31 +154,6 @@ export async function packDocx(packageDirectory, outputPath) {
   await run("zip", ["-q", "-X", "-r", outputPath, "."], { cwd: packageDirectory });
   await run("unzip", ["-tqq", outputPath]);
   return sha256File(outputPath);
-}
-
-export async function renderDocx(docxPath, outputDirectory, command = "soffice") {
-  await rm(outputDirectory, { recursive: true, force: true });
-  await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
-  const profileDirectory = path.join(outputDirectory, ".lo-profile");
-  await mkdir(profileDirectory, { recursive: true, mode: 0o700 });
-  await run(command, [
-    `-env:UserInstallation=${pathToFileURL(profileDirectory).href}`,
-    "--headless",
-    "--convert-to",
-    "pdf",
-    "--outdir",
-    outputDirectory,
-    docxPath,
-  ]);
-  const pdfPath = path.join(
-    outputDirectory,
-    `${path.basename(docxPath, path.extname(docxPath))}.pdf`,
-  );
-  const info = await stat(pdfPath);
-  if (!info.isFile() || info.size < 1000) {
-    throw new Error("LibreOffice не создал пригодный PDF для визуальной проверки.");
-  }
-  return { pdfPath, sha256: await sha256File(pdfPath), size: info.size };
 }
 
 export async function packageInventory(packageDirectory) {

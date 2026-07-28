@@ -30,7 +30,7 @@ const elements = Object.fromEntries(
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
     "documents-list", "download-candidate", "download-final", "download-json",
-    "download-preview", "download-text", "draft-drop-zone",
+    "download-text", "draft-drop-zone",
     "draft-file-input", "draft-summary",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-summary", "finalize-run", "force-ocr", "formation-run-card",
@@ -1328,7 +1328,6 @@ function renderFormationRun(job) {
   const finalized = status === "finalized";
   const candidateReady = awaitingApproval || approved || finalized;
   elements["download-candidate"].disabled = !candidateReady;
-  elements["download-preview"].disabled = !candidateReady;
   elements["approver-name"].disabled = !awaitingApproval;
   elements["approve-candidate"].disabled = !awaitingApproval
     || !elements["approver-name"].value.trim();
@@ -1342,7 +1341,7 @@ function renderFormationRun(job) {
   } else if (awaitingApproval) {
     setRunStatus(
       "Нужна проверка",
-      "Автоматическое ревью завершено. Скачайте кандидат и PDF-превью, затем подтвердите точные хеши.",
+      "Автоматическое ревью завершено. Скачайте кандидат DOCX, затем подтвердите точные хеши.",
     );
   } else if (approved) {
     setRunStatus("Подтверждено", "Хеши зафиксированы. Можно выпустить финальный DOCX.", "good");
@@ -1522,7 +1521,6 @@ async function downloadRunFile(kind) {
     );
     const names = {
       candidate: "candidate-additional-agreement.docx",
-      preview: "candidate-additional-agreement.pdf",
       final: "final-additional-agreement.docx",
     };
     const blob = await response.blob();
@@ -1641,9 +1639,6 @@ elements["finalize-run"].addEventListener("click", () => {
 });
 elements["download-candidate"].addEventListener("click", () => {
   downloadRunFile("candidate").catch(console.error);
-});
-elements["download-preview"].addEventListener("click", () => {
-  downloadRunFile("preview").catch(console.error);
 });
 elements["download-final"].addEventListener("click", () => {
   downloadRunFile("final").catch(console.error);

@@ -51,10 +51,6 @@
     "formatRetries": 1,
     "stallRounds": 2
   },
-  "tools": {
-    "requireSoffice": true,
-    "sofficeCommand": "soffice"
-  },
   "storage": {
     "runRoot": "../data/runs",
     "retainAgentTranscripts": false

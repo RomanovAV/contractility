@@ -50,13 +50,6 @@
         "stallRounds": { "type": "integer", "minimum": 1, "maximum": 5 }
       }
     },
-    "tools": {
-      "type": "object",
-      "properties": {
-        "requireSoffice": { "type": "boolean" },
-        "sofficeCommand": { "type": "string" }
-      }
-    },
     "storage": {
       "type": "object",
       "required": ["runRoot"],
