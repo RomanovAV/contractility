@@ -25,6 +25,7 @@ Required work:
 8. Do not modify anything under `package/` during this phase.
 9. A blank template field or placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a template-only requisite (for example an EDI participant id, contact detail, or bank requisite) is absent from all supplied inputs, preserve that field as it appears in the template, record it under an `unresolvedFields` array in `artifacts/change-register.json`, create no operation that invents its value, and continue. Under `allowUnresolvedTemplateFields=true`, a missing template-only requisite must never produce `artifacts/blocker.json` or a `blocked` status.
 10. Distinguish an unresolved template-only field from an ambiguous intended legal or commercial change. Only the latter may require `artifacts/blocker.json` and stop the process.
+11. Create both JSON artifacts through a JSON serializer; never concatenate or manually escape document text. Before returning the final status, parse both completed files with a JSON parser and verify that `change-register.json` has a `changes` array and `change-plan.json` has an `operations` array.
 
 When the change register and plan are ready, output exactly:
 {"status":"change-plan-ready"}

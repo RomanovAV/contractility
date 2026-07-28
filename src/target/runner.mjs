@@ -282,7 +282,56 @@ async function runProducerStage({
         + `MaxListenersExceededWarning, но результат стадии не готов: ${error.message}`,
       );
     }
-    throw error;
+    if (stage !== "plan" || error.code !== "INVALID_JSON") {
+      throw error;
+    }
+
+    const retryResult = await runGigacode({
+      config: executorConfig(config),
+      model: config.models.producer,
+      prompt: `${(await loadPrompt(promptName)).trim()}
+
+Task file: ${taskName}
+
+Recovery after invalid JSON artifacts:
+- the previous attempt produced malformed JSON; do not trust or patch its raw text;
+- re-read the trusted task and source files, then overwrite both change-register.json and change-plan.json;
+- create them through a JSON serializer rather than manual string concatenation;
+- parse both completed files with a JSON parser and verify their required arrays before returning the status.`,
+      cwd: roundDirectory,
+      session: "producer-plan-artifact-retry",
+      onEvent: onGigacodeEvent,
+      transcriptDirectory: transcriptDirectory(config, runDirectory),
+    });
+    if (!retryResult.ok) {
+      throw new Error(
+        `Producer plan не исправил некорректные JSON-артефакты: `
+        + `${retryResult.stderr || retryResult.output}`,
+      );
+    }
+    assertRequestedModel(retryResult, config.models.producer);
+    let retryStatus;
+    try {
+      retryStatus = parseProducerStatus(retryResult.output);
+    } catch (statusError) {
+      throw new Error(
+        `Producer plan после исправления артефактов вернул некорректный `
+        + `JSON-статус: ${statusError.message}.`,
+      );
+    }
+    if (retryStatus.status === "blocked") {
+      return {
+        blocked: retryStatus.reason ?? "Producer plan запросил ручное решение.",
+        artifacts: null,
+      };
+    }
+    if (retryStatus.status !== expectedStatus) {
+      throw new Error(
+        `Producer plan после исправления артефактов не подтвердил `
+        + `ожидаемый статус ${expectedStatus}.`,
+      );
+    }
+    artifacts = await validateArtifacts();
   }
   if (recovered) {
     onGigacodeEvent("recovered", {

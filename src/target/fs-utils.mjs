@@ -41,7 +41,18 @@ export async function atomicWriteText(filePath, value) {
 }
 
 export async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, "utf8"));
+  const content = await readFile(filePath, "utf8");
+  try {
+    return JSON.parse(content);
+  } catch (cause) {
+    const error = new SyntaxError(
+      `Некорректный JSON в ${path.basename(filePath)}: ${cause.message}`,
+      { cause },
+    );
+    error.code = "INVALID_JSON";
+    error.filePath = filePath;
+    throw error;
+  }
 }
 
 export async function copyVerified(source, destination, expectedSha256) {

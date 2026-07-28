@@ -296,7 +296,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     },
     outputRoot: path.join(temporary, "cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "producer-cancel-slow-review";
+  process.env.FAKE_GIGACODE_MODE = "producer-cancel-slow-review-malformed-plan";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -364,6 +364,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
         ))),
     );
     assert.ok(agentStatuses.some((status) => status.role === "producer-reconstruct"));
+    assert.ok(agentStatuses.some((status) => status.role === "producer-plan-retry"));
     assert.ok(agentStatuses.some((status) =>
       status.role === "producer-apply"
       && status.phase === "recovered"

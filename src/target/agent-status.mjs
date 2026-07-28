@@ -26,6 +26,9 @@ function sessionIdentity(session) {
   if (session === "producer-plan") {
     return { role: "producer-plan", round: 1, reviewerId: null };
   }
+  if (session === "producer-plan-artifact-retry") {
+    return { role: "producer-plan-retry", round: 1, reviewerId: null };
+  }
   if (session === "producer-apply") {
     return { role: "producer-apply", round: 1, reviewerId: null };
   }

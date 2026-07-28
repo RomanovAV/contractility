@@ -47,9 +47,13 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   );
   await readFile(path.join(process.cwd(), task.paths.currentContract), "utf8");
   const artifacts = path.join(process.cwd(), "artifacts");
+  const malformedPlan = mode.includes("malformed-plan")
+    && !prompt.includes("Recovery after invalid JSON artifacts");
   await writeFile(
     path.join(artifacts, "change-register.json"),
-    `${JSON.stringify({ changes: [] }, null, 2)}\n`,
+    malformedPlan
+      ? `{"changes":[{"evidence":"ПАО "ВымпелКом""}]}\n`
+      : `${JSON.stringify({ changes: [] }, null, 2)}\n`,
   );
   await writeFile(
     path.join(artifacts, "change-plan.json"),
