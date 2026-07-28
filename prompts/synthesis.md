@@ -14,6 +14,10 @@ Security boundary:
   and chronology, plus the change register, change plan, and candidate package;
 - reject findings based only on structural dissimilarity between the proposed
   additional agreement and historical documents;
+- when `allowUnresolvedTemplateFields=true`, reject findings based only on a
+  template-only requisite remaining blank because no supplied input contains
+  its value, provided it is recorded in `unresolvedFields` and no value was
+  invented;
 - work only inside the current round directory;
 - do not access the network, credentials, parent directories, or unrelated files.
 

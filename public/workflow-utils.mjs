@@ -153,7 +153,8 @@ export function buildFormationRequest({
       preserveProposedAgreementLayout: true,
       allowSemanticEditsInEditableOoxmlParts: true,
       requiredCoverage: "all-changes-declared-by-proposed-agreement",
-      placeholderPolicy: "resolve-from-supplied-content-or-block-specific-field",
+      placeholderPolicy: "resolve-from-supplied-content-or-preserve-empty-template-field",
+      allowUnresolvedTemplateFields: true,
       preserveDocxFeatures: [
         "page-layout",
         "styles",
@@ -170,7 +171,7 @@ export function buildFormationRequest({
     expectedOutput: {
       currentContractEdition: "Полная действующая редакция после всех подписанных изменений.",
       changeRegister: "Операции с источником, пунктом назначения и уровнем уверенности.",
-      unresolvedIssues: "Коллизии, пропуски OCR и неоднозначности для ручного решения.",
+      unresolvedIssues: "Незаполненные поля шаблона фиксируются без остановки; юридические коллизии и неоднозначности требуют ручного решения.",
       finalAgreementDocx: "Финальный DOCX в форме предлагаемого дополнительного соглашения, покрывающий все заявленные изменения.",
     },
     provenance: {

@@ -21,7 +21,8 @@ Required work:
 5. Do not try to make its structure resemble the reconstructed contract or historical amendments.
 6. Do not reinterpret signed evidence or invent additional changes during this phase.
 7. Do not create a DOCX or ZIP; the deterministic orchestrator packages and validates the directory.
-8. If an operation cannot be applied safely, write `artifacts/blocker.json` and stop.
+8. When `allowUnresolvedTemplateFields=true`, preserve unresolved template-only fields exactly as they appear in the proposed DOCX, including leaving them blank. Their absence is not a blocker and must not be replaced with invented data.
+9. If a planned legal or commercial operation cannot be applied safely for a reason other than an allowed unresolved template field, write `artifacts/blocker.json` and stop.
 
 When the package is ready, output exactly:
 {"status":"candidate-ready"}

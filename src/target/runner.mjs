@@ -115,7 +115,8 @@ function formationPolicy() {
     preserveProposedAgreementLayout: true,
     allowSemanticEditsInEditableOoxmlParts: true,
     requiredCoverage: "all-changes-declared-by-proposed-agreement",
-    placeholderPolicy: "resolve-from-supplied-content-or-block-specific-field",
+    placeholderPolicy: "resolve-from-supplied-content-or-preserve-empty-template-field",
+    allowUnresolvedTemplateFields: true,
     requireEvidenceForEveryChange: true,
     requireHumanApprovalBeforeFinalization: true,
   };

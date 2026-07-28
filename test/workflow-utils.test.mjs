@@ -125,6 +125,11 @@ test("buildFormationRequest records the four-stage legal workflow and DOCX ident
   assert.equal(request.rules.doNotTreatDraftAsSigned, true);
   assert.equal(request.rules.proposedAgreementRole, "declared-change-intent-and-output-template");
   assert.equal(request.rules.requireStructuralSimilarityToCurrentContract, false);
+  assert.equal(
+    request.rules.placeholderPolicy,
+    "resolve-from-supplied-content-or-preserve-empty-template-field",
+  );
+  assert.equal(request.rules.allowUnresolvedTemplateFields, true);
   assert.equal(request.rules.requireHumanApprovalBeforeFinalization, true);
 });
 

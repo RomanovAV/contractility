@@ -344,6 +344,11 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     ));
     assert.ok(Object.values(producerTask.paths).every((value) => !value.includes("..")));
     assert.equal(producerTask.policy.conflictResolution, "later-signed-amendment-wins");
+    assert.equal(
+      producerTask.policy.placeholderPolicy,
+      "resolve-from-supplied-content-or-preserve-empty-template-field",
+    );
+    assert.equal(producerTask.policy.allowUnresolvedTemplateFields, true);
     const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
     assert.match(events, /"event":"gigacode\.recovered"/);
     assert.doesNotMatch(events, /"event":"gigacode\.activity"/);

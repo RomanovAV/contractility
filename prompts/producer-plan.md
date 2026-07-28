@@ -23,8 +23,8 @@ Required work:
 6. Write `artifacts/change-register.json`; every planned change must identify whether it comes from the proposed agreement or is a consistency correction, with supporting signed evidence where applicable.
 7. Write `artifacts/change-plan.json` with an `operations` array. Every operation must identify its target OOXML part, semantic target, expected current text, required replacement, and related change-register id.
 8. Do not modify anything under `package/` during this phase.
-9. A placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a required value is genuinely absent or ambiguous, block only that specific field and identify its locator; do not reject the template as a whole.
-10. If an intended change itself is legally ambiguous or cannot be planned safely, write `artifacts/blocker.json` and stop.
+9. A blank template field or placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a template-only requisite (for example an EDI participant id, contact detail, or bank requisite) is absent from all supplied inputs, preserve that field as it appears in the template, record it under an `unresolvedFields` array in `artifacts/change-register.json`, create no operation that invents its value, and continue. Under `allowUnresolvedTemplateFields=true`, a missing template-only requisite must never produce `artifacts/blocker.json` or a `blocked` status.
+10. Distinguish an unresolved template-only field from an ambiguous intended legal or commercial change. Only the latter may require `artifacts/blocker.json` and stop the process.
 
 When the change register and plan are ready, output exactly:
 {"status":"change-plan-ready"}
