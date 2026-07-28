@@ -21,7 +21,6 @@ export async function loadTargetConfig(configPath, { allowPlaceholders = false }
       maxRounds: 5,
       maxParallel: 5,
       formatRetries: 1,
-      requiredDistinctModels: 3,
       stallRounds: 2,
       ...config.review,
     },
@@ -66,13 +65,6 @@ export function validateTargetConfig(config, { allowPlaceholders = false } = {})
   const models = [producer, synthesizer, ...reviewers.map((reviewer) => reviewer.model)];
   if (!allowPlaceholders && models.some((model) => PLACEHOLDER_MODEL.test(model))) {
     throw new TypeError("Замените MODEL_* на реальные идентификаторы моделей GigaCode.");
-  }
-  const distinctModels = new Set(models).size;
-  const requiredDistinct = config.review?.requiredDistinctModels ?? 3;
-  if (distinctModels < requiredDistinct) {
-    throw new TypeError(
-      `Нужно минимум ${requiredDistinct} разных моделей, настроено ${distinctModels}.`,
-    );
   }
   for (const [field, minimum, maximum] of [
     ["maxRounds", 1, 20],

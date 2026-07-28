@@ -121,7 +121,6 @@ test("workflow API protects mutations and prepares a verified local case", async
       maxRounds: 2,
       maxParallel: 3,
       formatRetries: 0,
-      requiredDistinctModels: 3,
       stallRounds: 2,
     },
     tools: {

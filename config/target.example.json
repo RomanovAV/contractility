@@ -49,7 +49,6 @@
     "maxRounds": 5,
     "maxParallel": 5,
     "formatRetries": 1,
-    "requiredDistinctModels": 3,
     "stallRounds": 2
   },
   "tools": {

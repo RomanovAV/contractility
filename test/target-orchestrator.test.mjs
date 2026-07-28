@@ -103,7 +103,6 @@ function targetConfig(runRoot, { passEnvironment = [] } = {}) {
       maxRounds: 3,
       maxParallel: 3,
       formatRetries: 1,
-      requiredDistinctModels: 3,
       stallRounds: 2,
     },
     tools: { requireSoffice: false },
@@ -235,16 +234,15 @@ test("review parser rejects prose and accepts domain findings", () => {
   assert.match(report.findings[0].id, /^finding-/);
 });
 
-test("target config enforces multiple distinct reviewer models", () => {
+test("target config allows one model for every agent role", () => {
   const config = targetConfig("/tmp/runs");
-  validateTargetConfig(config);
   config.models.reviewers = config.models.reviewers.map((reviewer) => ({
     ...reviewer,
     model: "same-model",
   }));
   config.models.producer = "same-model";
   config.models.synthesizer = "same-model";
-  assert.throws(() => validateTargetConfig(config), /минимум 3 разных моделей/);
+  assert.doesNotThrow(() => validateTargetConfig(config));
 });
 
 test("full run recovers a complete producer candidate after known GigaCode CLI cancellation", async () => {

@@ -146,8 +146,9 @@ Node.js 22+, GigaCode CLI, `zip`/`unzip` и LibreOffice `soffice`. На целе
 cp config/target.example.json config/target.json
 ```
 
-Минимум три разных модели обязательны. Отдельные модели задаются для producer,
-арбитра и каждого reviewer. Проверить CLI, зависимости и все модели:
+Producer, арбитр и все reviewer-роли могут использовать один и тот же
+идентификатор модели. При желании каждой роли можно назначить отдельную модель.
+Проверить CLI, зависимости и все уникальные модели:
 
 ```bash
 npm run doctor:target -- --config config/target.json --smoke
