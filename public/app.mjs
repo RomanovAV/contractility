@@ -12,6 +12,7 @@ import {
 } from "./ocr-utils.mjs";
 import {
   buildFormationRequest,
+  createReviewerMetadataLines,
   createFormationTextExport,
   formationLaunchAvailability,
   mergeDocumentBatch,
@@ -1300,17 +1301,24 @@ function renderReviewers(run) {
       verdict.textContent = `${report.findings.length} замеч.`;
     }
     header.append(title, verdict);
-    const model = globalThis.document.createElement("span");
-    model.className = "reviewer-model";
+    const metadata = globalThis.document.createElement("div");
+    metadata.className = "reviewer-metadata";
     const activity = agent?.lastActivityAt
       ? new Date(agent.lastActivityAt).toLocaleTimeString("ru-RU")
       : null;
-    model.textContent = [
-      reviewer.model ?? report?.reviewer?.requestedModel ?? "модель не указана",
-      agent?.attempt ? `попытка ${agent.attempt}` : null,
-      activity ? `активность ${activity}` : null,
-    ].filter(Boolean).join(" · ");
-    card.append(header, model);
+    const metadataLines = createReviewerMetadataLines({
+      model: reviewer.model ?? report?.reviewer?.requestedModel,
+      attempt: agent?.attempt,
+      activity,
+    });
+    for (const { kind, text } of metadataLines) {
+      const line = globalThis.document.createElement("span");
+      line.className = `reviewer-metadata-line ${kind}`;
+      line.textContent = text;
+      line.title = text;
+      metadata.append(line);
+    }
+    card.append(header, metadata);
 
     if (report?.findings?.length > 0) {
       const list = globalThis.document.createElement("ul");

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildFormationRequest,
   createFormationTextExport,
+  createReviewerMetadataLines,
   createSemanticSignedDocuments,
   formationLaunchAvailability,
   mergeDocumentBatch,
@@ -117,6 +118,18 @@ test("normalizeReviewerReports ignores incomplete and unrelated JSON artifacts",
     { reviewer: { id: "legal-b" }, verdict: "unknown", findings: [] },
     valid,
   ]), [valid]);
+});
+
+test("createReviewerMetadataLines keeps reviewer details on separate rows", () => {
+  assert.deepEqual(createReviewerMetadataLines({
+    model: "review-model-a",
+    attempt: 2,
+    activity: "15:42:08",
+  }), [
+    { kind: "model", text: "Модель: review-model-a" },
+    { kind: "attempt", text: "Попытка: 2" },
+    { kind: "activity", text: "Активность: 15:42:08" },
+  ]);
 });
 
 test("normalizeDocumentOrder keeps the contract first and relabels amendments", () => {

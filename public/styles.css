@@ -229,7 +229,9 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .reviewer-verdict.active { background: var(--amber-soft); color: var(--amber); }
 .reviewer-verdict.good { background: var(--accent-soft); color: var(--accent); }
 .reviewer-verdict.failed { background: #fce8e5; color: var(--danger); }
-.reviewer-model { display: block; overflow: hidden; color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.reviewer-metadata { display: grid; gap: 3px; color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 8px; line-height: 1.35; }
+.reviewer-metadata-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reviewer-metadata-line.activity { color: var(--ink); font-variant-numeric: tabular-nums; }
 .finding-list { display: grid; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
 .finding-list li { padding-top: 5px; border-top: 1px solid var(--line); color: #4c5853; font-size: 9px; line-height: 1.4; }
 .finding-list b { margin-right: 4px; color: var(--danger); text-transform: uppercase; }

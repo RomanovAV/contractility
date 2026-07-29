@@ -85,6 +85,21 @@ export function normalizeReviewerReports(reports) {
     && Array.isArray(report.findings));
 }
 
+export function createReviewerMetadataLines({ model, attempt, activity }) {
+  return [
+    {
+      kind: "model",
+      text: `Модель: ${model || "не указана"}`,
+    },
+    Number.isInteger(attempt) && attempt > 0
+      ? { kind: "attempt", text: `Попытка: ${attempt}` }
+      : null,
+    activity
+      ? { kind: "activity", text: `Активность: ${activity}` }
+      : null,
+  ].filter(Boolean);
+}
+
 export function normalizeDocumentOrder(documents) {
   return documents.map((document, index) => ({
     ...document,
