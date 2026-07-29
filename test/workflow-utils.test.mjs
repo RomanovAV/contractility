@@ -4,6 +4,7 @@ import {
   buildFormationRequest,
   createFormationTextExport,
   createSemanticSignedDocuments,
+  formationLaunchAvailability,
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeDocumentOrder,
@@ -62,6 +63,45 @@ test("validateDraftAgreementFile rejects PDF and empty files", () => {
     type: DOCX_MIME,
     size: 0,
   }), /пуст/);
+});
+
+test("formation launch stays actionable when target configuration needs a refresh", () => {
+  assert.deepEqual(formationLaunchAvailability({
+    ocrComplete: true,
+    draftReady: true,
+    targetReady: false,
+    targetChecking: false,
+    formationBusy: false,
+    formationJobActive: false,
+  }), {
+    enabled: true,
+    refreshTargetBeforeLaunch: true,
+    reason: "Нажмите, чтобы повторно проверить конфигурацию GigaCode.",
+  });
+  assert.equal(formationLaunchAvailability({
+    ocrComplete: false,
+    draftReady: true,
+    targetReady: true,
+    targetChecking: false,
+    formationBusy: false,
+    formationJobActive: false,
+  }).enabled, false);
+  assert.equal(formationLaunchAvailability({
+    ocrComplete: true,
+    draftReady: false,
+    targetReady: true,
+    targetChecking: false,
+    formationBusy: false,
+    formationJobActive: false,
+  }).enabled, false);
+  assert.equal(formationLaunchAvailability({
+    ocrComplete: true,
+    draftReady: true,
+    targetReady: true,
+    targetChecking: false,
+    formationBusy: false,
+    formationJobActive: true,
+  }).enabled, false);
 });
 
 test("normalizeDocumentOrder keeps the contract first and relabels amendments", () => {

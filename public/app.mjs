@@ -13,6 +13,7 @@ import {
 import {
   buildFormationRequest,
   createFormationTextExport,
+  formationLaunchAvailability,
   mergeDocumentBatch,
   moveHistoricalDocument,
   validateDraftAgreementFile,
@@ -63,6 +64,7 @@ const state = {
   draftAgreement: null,
   targetSession: null,
   targetSessionError: null,
+  targetSessionPromise: null,
   formationBusy: false,
   formationJobId: null,
   formationRunId: null,
@@ -147,10 +149,16 @@ function updateFormationState() {
   elements["download-json"].disabled = !isFormationReady();
   elements["download-text"].disabled = !isFormationReady();
   const targetReady = Boolean(state.targetSession?.target?.ready);
-  elements["start-formation"].disabled = !isFormationReady()
-    || !targetReady
-    || state.formationBusy
-    || Boolean(state.formationJobId);
+  const launchAvailability = formationLaunchAvailability({
+    ocrComplete: isOcrComplete(),
+    draftReady: Boolean(state.draftAgreement?.sha256),
+    targetReady,
+    targetChecking: Boolean(state.targetSessionPromise),
+    formationBusy: state.formationBusy,
+    formationJobActive: Boolean(state.formationJobId),
+  });
+  elements["start-formation"].disabled = !launchAvailability.enabled;
+  elements["start-formation"].title = launchAvailability.reason;
 
   if (isFormationReady()) {
     elements["formation-status"].textContent =
@@ -178,7 +186,8 @@ function updateFormationState() {
   } else if (state.targetSessionError || state.targetSession?.target?.error) {
     elements["target-status-note"].classList.add("failed");
     elements["target-status-note"].textContent =
-      `GigaCode недоступен: ${state.targetSessionError ?? state.targetSession.target.error}`;
+      `GigaCode недоступен: ${state.targetSessionError ?? state.targetSession.target.error}. `
+      + "После исправления конфигурации нажмите «Запустить формирование» для повторной проверки.";
   } else {
     elements["target-status-note"].textContent = "Проверяется готовность GigaCode…";
   }
@@ -408,6 +417,9 @@ async function loadDraftAgreement(fileList) {
     sha256: await sha256(buffer),
   };
   renderDraftAgreement();
+  if (isOcrComplete() && !state.targetSession?.target?.ready) {
+    await initializeTargetSession();
+  }
 }
 
 function validatePdfFiles(files) {
@@ -1020,6 +1032,9 @@ async function runOcr() {
     setRunning(false);
     renderPageList();
     updateFormationState();
+    if (isFormationReady() && !state.targetSession?.target?.ready) {
+      await initializeTargetSession();
+    }
   }
 }
 
@@ -1076,20 +1091,29 @@ function buildCurrentFormationRequest() {
 }
 
 async function initializeTargetSession() {
-  try {
-    const response = await fetch("/api/workflow/session", {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? "Локальный API недоступен.");
-    state.targetSession = result;
-    state.targetSessionError = null;
-  } catch (error) {
-    state.targetSession = null;
-    state.targetSessionError = error.message ?? String(error);
-  }
+  if (state.targetSessionPromise) return state.targetSessionPromise;
+  const pending = (async () => {
+    try {
+      const response = await fetch("/api/workflow/session", {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Локальный API недоступен.");
+      state.targetSession = result;
+      state.targetSessionError = null;
+    } catch (error) {
+      state.targetSession = null;
+      state.targetSessionError = error.message ?? String(error);
+    } finally {
+      state.targetSessionPromise = null;
+      updateFormationState();
+    }
+    return state.targetSession;
+  })();
+  state.targetSessionPromise = pending;
   updateFormationState();
+  return pending;
 }
 
 async function workflowFetch(relativePath, options = {}) {
@@ -1387,7 +1411,17 @@ async function pollFormationJob() {
 }
 
 async function launchFormation() {
-  if (!isFormationReady() || !state.targetSession?.target?.ready || state.formationBusy) return;
+  if (!isFormationReady() || state.formationBusy || state.formationJobId) return;
+  if (!state.targetSession?.target?.ready) {
+    await initializeTargetSession();
+    if (!state.targetSession?.target?.ready) {
+      const reason = state.targetSessionError
+        ?? state.targetSession?.target?.error
+        ?? "конфигурация GigaCode не готова";
+      setError(`Формирование не запущено: ${reason}`);
+      return;
+    }
+  }
   const formationRequest = buildCurrentFormationRequest();
   let stageId = null;
   state.formationBusy = true;

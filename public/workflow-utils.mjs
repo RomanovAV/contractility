@@ -24,6 +24,56 @@ export function validateDraftAgreementFile(file) {
   return "";
 }
 
+export function formationLaunchAvailability({
+  ocrComplete,
+  draftReady,
+  targetReady,
+  targetChecking,
+  formationBusy,
+  formationJobActive,
+}) {
+  if (!ocrComplete) {
+    return {
+      enabled: false,
+      refreshTargetBeforeLaunch: false,
+      reason: "Завершите распознавание всех страниц без ошибок.",
+    };
+  }
+  if (!draftReady) {
+    return {
+      enabled: false,
+      refreshTargetBeforeLaunch: false,
+      reason: "Загрузите предлагаемое дополнительное соглашение DOCX.",
+    };
+  }
+  if (formationBusy || formationJobActive) {
+    return {
+      enabled: false,
+      refreshTargetBeforeLaunch: false,
+      reason: "Предыдущий запуск ещё выполняется.",
+    };
+  }
+  if (targetChecking) {
+    return {
+      enabled: false,
+      refreshTargetBeforeLaunch: false,
+      reason: "Проверяется конфигурация GigaCode.",
+    };
+  }
+  if (!targetReady) {
+    return {
+      enabled: true,
+      refreshTargetBeforeLaunch: true,
+      reason: "Нажмите, чтобы повторно проверить конфигурацию GigaCode.",
+    };
+  }
+  return {
+    enabled: true,
+    refreshTargetBeforeLaunch: false,
+    reason: "Все входы и конфигурация готовы.",
+  };
+}
+
 export function normalizeDocumentOrder(documents) {
   return documents.map((document, index) => ({
     ...document,
