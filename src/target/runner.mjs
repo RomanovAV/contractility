@@ -38,6 +38,7 @@ import {
   verifyEvidenceWorkspace,
 } from "./evidence.mjs";
 import { createAgentStatusStore } from "./agent-status.mjs";
+import { validateReconstructionScope } from "./scope.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -105,6 +106,12 @@ function formationPolicy() {
   return {
     amendmentOrder: "strict-input-order",
     conflictResolution: "later-signed-amendment-wins",
+    baseContractIdentity: "number-and-date-from-contract-role-document",
+    bundledDocumentPolicy: "classify-each-contained-legal-instrument",
+    outOfScopeInstrumentPolicy: "exclude-and-record",
+    fullClauseReplacementPolicy:
+      "supersede-entire-prior-clause-body-including-omitted-tiers-and-exceptions",
+    separatelyNumberedSubclausePolicy: "preserve-unless-explicitly-deleted-or-replaced",
     preserveSourceMeaning: true,
     doNotTreatDraftAsSigned: true,
     preserveDocxStructure: true,
@@ -130,6 +137,20 @@ async function requireCurrentContract(roundDirectory) {
   return currentContract;
 }
 
+async function requireReconstructionArtifacts(roundDirectory) {
+  const currentContract = await requireCurrentContract(roundDirectory);
+  const reconstructionScope = path.join(
+    roundDirectory,
+    "artifacts/reconstruction-scope.json",
+  );
+  const scope = await readJson(reconstructionScope);
+  const evidenceManifest = await readJson(
+    path.join(roundDirectory, "evidence/manifest.json"),
+  );
+  validateReconstructionScope(scope, evidenceManifest);
+  return { currentContract, reconstructionScope };
+}
+
 async function requireChangeArtifacts(roundDirectory) {
   const changeRegister = path.join(roundDirectory, "artifacts/change-register.json");
   const changePlan = path.join(roundDirectory, "artifacts/change-plan.json");
@@ -145,9 +166,10 @@ async function requireChangeArtifacts(roundDirectory) {
 }
 
 async function requireProducerArtifacts(roundDirectory) {
-  const currentContract = await requireCurrentContract(roundDirectory);
+  const { currentContract, reconstructionScope } =
+    await requireReconstructionArtifacts(roundDirectory);
   const { changeRegister, changePlan } = await requireChangeArtifacts(roundDirectory);
-  return { currentContract, changeRegister, changePlan };
+  return { currentContract, reconstructionScope, changeRegister, changePlan };
 }
 
 function isProducerStatus(value) {
@@ -375,6 +397,7 @@ async function workspaceFingerprint(roundDirectory, inventory) {
   const pieces = [inventoryFingerprint(inventory)];
   for (const relative of [
     "artifacts/current-contract.md",
+    "artifacts/reconstruction-scope.json",
     "artifacts/change-register.json",
     "artifacts/change-plan.json",
   ]) {
@@ -428,6 +451,7 @@ async function runReviewer({
       evidenceManifest: "evidence/manifest.json",
       evidenceDocuments: "evidence/documents",
       currentContract: "artifacts/current-contract.md",
+      reconstructionScope: "artifacts/reconstruction-scope.json",
       changeRegister: "artifacts/change-register.json",
       changePlan: "artifacts/change-plan.json",
       candidateDocx: "candidate.docx",
@@ -532,6 +556,7 @@ async function runSynthesis({
       evidenceManifest: "evidence/manifest.json",
       evidenceDocuments: "evidence/documents",
       currentContract: "artifacts/current-contract.md",
+      reconstructionScope: "artifacts/reconstruction-scope.json",
       changeRegister: "artifacts/change-register.json",
       changePlan: "artifacts/change-plan.json",
       candidateDocx: "candidate.docx",
@@ -653,6 +678,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         evidenceManifest: "evidence/manifest.json",
         evidenceDocuments: "evidence/documents",
         currentContract: "artifacts/current-contract.md",
+        reconstructionScope: "artifacts/reconstruction-scope.json",
         blocker: "artifacts/blocker.json",
       },
     });
@@ -676,7 +702,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           path.join(firstRoundDirectory, "evidence"),
           evidenceManifestSha256,
         );
-        return requireCurrentContract(firstRoundDirectory);
+        return requireReconstructionArtifacts(firstRoundDirectory);
       },
     });
     if (reconstruction.blocked) {
@@ -695,6 +721,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         evidenceManifest: "evidence/manifest.json",
         evidenceDocuments: "evidence/documents",
         currentContract: "artifacts/current-contract.md",
+        reconstructionScope: "artifacts/reconstruction-scope.json",
         package: "package",
         changeRegister: "artifacts/change-register.json",
         changePlan: "artifacts/change-plan.json",
@@ -738,6 +765,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       ...sharedProducerTask,
       paths: {
         currentContract: "artifacts/current-contract.md",
+        reconstructionScope: "artifacts/reconstruction-scope.json",
         changeRegister: "artifacts/change-register.json",
         changePlan: "artifacts/change-plan.json",
         package: "package",

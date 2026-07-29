@@ -15,14 +15,16 @@ Security boundary:
 
 Required work:
 1. Read `application-task.json`; resolve every path relative to the current working directory.
-2. Apply only operations listed in `artifacts/change-plan.json`.
-3. Make the semantic edits required for the final additional agreement to cover every intended delta in the plan.
-4. Preserve the proposed agreement's layout, tables, styles, numbering, footnotes, headers, footers, fields, relationships, and every unrelated package part.
-5. Do not try to make its structure resemble the reconstructed contract or historical amendments.
-6. Do not reinterpret signed evidence or invent additional changes during this phase.
-7. Do not create a DOCX or ZIP; the deterministic orchestrator packages and validates the directory.
-8. When `allowUnresolvedTemplateFields=true`, preserve unresolved template-only fields exactly as they appear in the proposed DOCX, including leaving them blank. Their absence is not a blocker and must not be replaced with invented data.
-9. If a planned legal or commercial operation cannot be applied safely for a reason other than an allowed unresolved template field, write `artifacts/blocker.json` and stop.
+2. Read `artifacts/reconstruction-scope.json` for audit context, but do not
+   reinterpret its included/excluded decisions.
+3. Apply only operations listed in `artifacts/change-plan.json`.
+4. Make the semantic edits required for the final additional agreement to cover every intended delta in the plan.
+5. Preserve the proposed agreement's layout, tables, styles, numbering, footnotes, headers, footers, fields, relationships, and every unrelated package part.
+6. Do not try to make its structure resemble the reconstructed contract or historical amendments.
+7. Do not reinterpret signed evidence or invent additional changes during this phase.
+8. Do not create a DOCX or ZIP; the deterministic orchestrator packages and validates the directory.
+9. When `allowUnresolvedTemplateFields=true`, preserve unresolved template-only fields exactly as they appear in the proposed DOCX, including leaving them blank. Their absence is not a blocker and must not be replaced with invented data.
+10. If a planned legal or commercial operation cannot be applied safely for a reason other than an allowed unresolved template field, write `artifacts/blocker.json` and stop.
 
 When the package is ready, output exactly:
 {"status":"candidate-ready"}

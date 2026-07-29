@@ -16,16 +16,25 @@ Security boundary:
 
 Required work:
 1. Read `change-plan-task.json`; resolve every path relative to the current working directory.
-2. Extract every intended legal and commercial change declared by the proposed additional agreement.
-3. Compare those intended changes semantically with the reconstructed current contract and ensure the final agreement will cover every required delta without omissions or contradictions.
-4. Never compare the document structures themselves. Different clause numbering, terminology systems, appendices, or layouts between historical documents and the proposed additional agreement are normal and are not blockers.
-5. Treat `preserveDocxStructure=true` only as a requirement to preserve the proposed DOCX layout, styles, tables, headers, footers, relationships, and unrelated OOXML—not as a ban on required semantic edits.
-6. Write `artifacts/change-register.json`; every planned change must identify whether it comes from the proposed agreement or is a consistency correction, with supporting signed evidence where applicable.
-7. Write `artifacts/change-plan.json` with an `operations` array. Every operation must identify its target OOXML part, semantic target, expected current text, required replacement, and related change-register id.
-8. Do not modify anything under `package/` during this phase.
-9. A blank template field or placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a template-only requisite (for example an EDI participant id, contact detail, or bank requisite) is absent from all supplied inputs, preserve that field as it appears in the template, record it under an `unresolvedFields` array in `artifacts/change-register.json`, create no operation that invents its value, and continue. Under `allowUnresolvedTemplateFields=true`, a missing template-only requisite must never produce `artifacts/blocker.json` or a `blocked` status.
-10. Distinguish an unresolved template-only field from an ambiguous intended legal or commercial change. Only the latter may require `artifacts/blocker.json` and stop the process.
-11. Create both JSON artifacts through a JSON serializer; never concatenate or manually escape document text. Before returning the final status, parse both completed files with a JSON parser and verify that `change-register.json` has a `changes` array and `change-plan.json` has an `operations` array.
+2. Read `artifacts/reconstruction-scope.json`. Treat its included/excluded
+   decisions as the authoritative evidence boundary for this phase. Never use an
+   excluded instrument to establish the current contract or create a change,
+   and do not block merely because excluded instruments target other contracts.
+3. Extract every intended legal and commercial change declared by the proposed additional agreement.
+4. Compare those intended changes semantically with the reconstructed current contract and ensure the final agreement will cover every required delta without omissions or contradictions.
+5. Apply the trusted replacement hierarchy: when an applicable later agreement
+   sets a clause out in a new wording, the new clause body fully supersedes the
+   former body, including omitted rate tiers, rows, exceptions, and conditions.
+   Separately numbered subclauses survive unless explicitly deleted or
+   replaced. A conflict already resolved by this rule is not a blocker.
+6. Never compare the document structures themselves. Different clause numbering, terminology systems, appendices, or layouts between historical documents and the proposed additional agreement are normal and are not blockers.
+7. Treat `preserveDocxStructure=true` only as a requirement to preserve the proposed DOCX layout, styles, tables, headers, footers, relationships, and unrelated OOXML—not as a ban on required semantic edits.
+8. Write `artifacts/change-register.json`; every planned change must identify whether it comes from the proposed agreement or is a consistency correction, with supporting signed evidence where applicable.
+9. Write `artifacts/change-plan.json` with an `operations` array. Every operation must identify its target OOXML part, semantic target, expected current text, required replacement, and related change-register id.
+10. Do not modify anything under `package/` during this phase.
+11. A blank template field or placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a template-only requisite (for example an EDI participant id, contact detail, or bank requisite) is absent from all supplied inputs, preserve that field as it appears in the template, record it under an `unresolvedFields` array in `artifacts/change-register.json`, create no operation that invents its value, and continue. Under `allowUnresolvedTemplateFields=true`, a missing template-only requisite must never produce `artifacts/blocker.json` or a `blocked` status.
+12. Distinguish an unresolved template-only field from an ambiguous intended legal or commercial change. Only the latter may require `artifacts/blocker.json` and stop the process.
+13. Create both JSON artifacts through a JSON serializer; never concatenate or manually escape document text. Before returning the final status, parse both completed files with a JSON parser and verify that `change-register.json` has a `changes` array and `change-plan.json` has an `operations` array.
 
 When the change register and plan are ready, output exactly:
 {"status":"change-plan-ready"}

@@ -29,6 +29,7 @@ import {
   verifyRun,
 } from "../src/target/runner.mjs";
 import { parseReviewReport } from "../src/target/review.mjs";
+import { validateReconstructionScope } from "../src/target/scope.mjs";
 
 const execFileAsync = promisify(execFile);
 const fakeGigacode = path.resolve("test-support/fake-gigacode.mjs");
@@ -244,6 +245,56 @@ test("target config allows one model for every agent role", () => {
   assert.doesNotThrow(() => validateTargetConfig(config));
 });
 
+test("reconstruction scope validates contract identity after harmless normalization", () => {
+  const evidenceManifest = {
+    documents: [
+      { id: "document-1", role: "contract", pageCount: 2 },
+      { id: "document-2", role: "additional-agreement", pageCount: 3 },
+    ],
+  };
+  const scope = {
+    schemaVersion: "contractility.reconstruction-scope.v1",
+    baseContract: {
+      sourceDocumentId: "document-1",
+      number: "№ 32–01/10",
+      date: "1.12.2011",
+      page: 1,
+      evidence: "Договор №32-01/10 от 01.12.2011",
+    },
+    instruments: [{
+      sourceDocumentId: "document-2",
+      pages: [1, 2],
+      agreementNumber: "8",
+      agreementDate: "15.02.2024",
+      referencedContractNumber: "N 32-01/10",
+      referencedContractDate: "01.12.2011 г.",
+      decision: "included",
+      reason: "Номер и дата совпадают.",
+    }],
+  };
+  assert.equal(validateReconstructionScope(scope, evidenceManifest), scope);
+  assert.throws(
+    () => validateReconstructionScope({
+      ...scope,
+      instruments: [{
+        ...scope.instruments[0],
+        referencedContractNumber: "38-ИЭ-РБ",
+      }],
+    }, evidenceManifest),
+    /включён, хотя номер или дата.*не совпадают/,
+  );
+  assert.throws(
+    () => validateReconstructionScope({
+      ...scope,
+      instruments: [{
+        ...scope.instruments[0],
+        decision: "excluded",
+      }],
+    }, evidenceManifest),
+    /исключён, хотя номер и дата.*совпадают/,
+  );
+});
+
 test("full run recovers a complete producer candidate after known GigaCode CLI cancellation", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-target-"));
@@ -346,6 +397,18 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
       "resolve-from-supplied-content-or-preserve-empty-template-field",
     );
     assert.equal(producerTask.policy.allowUnresolvedTemplateFields, true);
+    assert.equal(
+      producerTask.policy.bundledDocumentPolicy,
+      "classify-each-contained-legal-instrument",
+    );
+    assert.equal(
+      producerTask.policy.outOfScopeInstrumentPolicy,
+      "exclude-and-record",
+    );
+    assert.equal(
+      producerTask.policy.fullClauseReplacementPolicy,
+      "supersede-entire-prior-clause-body-including-omitted-tiers-and-exceptions",
+    );
     const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
     assert.match(events, /"event":"gigacode\.recovered"/);
     assert.doesNotMatch(events, /"event":"gigacode\.activity"/);
@@ -387,6 +450,146 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     const verified = await verifyRun(run.runDirectory);
     assert.equal(verified.ok, true);
     assert.equal(verified.sha256, finalized.manifest.sha256);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("mixed agreement bundle excludes other contracts and applies full clause replacement", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-scope-"));
+  const sources = {
+    "document-1": Buffer.from("%PDF-1.4\ncontract-2011\n%%EOF\n"),
+    "document-2": Buffer.from("%PDF-1.4\nagreement-6\n%%EOF\n"),
+    "document-3": Buffer.from("%PDF-1.4\nmixed-agreement-bundle\n%%EOF\n"),
+  };
+  const sourcePaths = {};
+  for (const [id, content] of Object.entries(sources)) {
+    const sourcePath = path.join(temporary, `${id}.pdf`);
+    await writeFile(sourcePath, content);
+    sourcePaths[id] = sourcePath;
+  }
+  const draftPath = await createMinimalDocx(temporary);
+  const draft = await readFile(draftPath);
+  const requestPath = path.join(temporary, "request.json");
+  await writeFile(requestPath, `${JSON.stringify({
+    schemaVersion: "contractility.formation-request.v1",
+    inputs: {
+      signedDocuments: [
+        {
+          id: "document-1",
+          role: "contract",
+          order: 1,
+          complete: true,
+          file: { name: "contract-2011.pdf", sha256: sha256(sources["document-1"]) },
+          pages: [{
+            number: 1,
+            text: [
+              "Договор №32-01/10 от 01.12.2011.",
+              "Пункт 5.1: 1,7% или 1,0% в зависимости от объёма.",
+            ].join(" "),
+          }],
+        },
+        {
+          id: "document-2",
+          role: "additional-agreement",
+          order: 2,
+          complete: true,
+          file: { name: "agreement-6.pdf", sha256: sha256(sources["document-2"]) },
+          pages: [{
+            number: 1,
+            text: [
+              "Дополнительное соглашение №6 к договору №32-01/10 от 01.12.2011.",
+              "Дополнить пунктом 5.1.1: SberPay QR — 1,60%.",
+            ].join(" "),
+          }],
+        },
+        {
+          id: "document-3",
+          role: "additional-agreement",
+          order: 3,
+          complete: true,
+          file: {
+            name: "mixed-agreement-bundle.pdf",
+            sha256: sha256(sources["document-3"]),
+          },
+          pages: [
+            {
+              number: 1,
+              text: "Соглашение №10 к договору №38-ИЭ-РБ от 24.11.2020.",
+            },
+            {
+              number: 2,
+              text: [
+                "Соглашение №8 к договору №32-01/10 от 01.12.2011.",
+                "Пункт 5.1 изложить в новой редакции: Visa/MC 1,90%, "
+                  + "SberPayQR 1,60%, SberPay FaceScan 1,90%.",
+                "Пункт 5.1.1 исключить.",
+              ].join(" "),
+            },
+            {
+              number: 3,
+              text: "Соглашение №2 к договору №38-РБ-4216-2023 от 30.05.2023.",
+            },
+          ],
+        },
+      ],
+      newAgreementEdition: {
+        file: { name: "draft.docx", size: draft.length, sha256: sha256(draft) },
+      },
+    },
+    rules: { requireHumanApprovalBeforeFinalization: true },
+  }, null, 2)}\n`);
+  const prepared = await prepareCase({
+    requestPath,
+    draftPath,
+    sources: sourcePaths,
+    outputRoot: path.join(temporary, "cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "mixed-contract-bundle";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    const scope = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/artifacts/reconstruction-scope.json"),
+      "utf8",
+    ));
+    assert.equal(scope.baseContract.number, "32-01/10");
+    assert.equal(scope.baseContract.date, "01.12.2011");
+    assert.deepEqual(
+      scope.instruments.map(({ agreementNumber, decision }) => ({
+        agreementNumber,
+        decision,
+      })),
+      [
+        { agreementNumber: "6", decision: "included" },
+        { agreementNumber: "10", decision: "excluded" },
+        { agreementNumber: "8", decision: "included" },
+        { agreementNumber: "2", decision: "excluded" },
+      ],
+    );
+    assert.ok(scope.instruments
+      .filter((instrument) => instrument.decision === "excluded")
+      .every((instrument) => /другой базовый договор/i.test(instrument.reason)));
+    const currentContract = await readFile(
+      path.join(run.runDirectory, "rounds/01/artifacts/current-contract.md"),
+      "utf8",
+    );
+    assert.match(currentContract, /Visa\/Mastercard — 1\.90%/);
+    assert.match(currentContract, /SberPayQR — 1\.60%/);
+    assert.match(currentContract, /5\.1\.1 удалён/);
+    assert.doesNotMatch(currentContract, /1[,.]7%|1[,.]0%|объ[её]м/i);
+    const reviewTask = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/review-task-legal-a.json"),
+      "utf8",
+    ));
+    assert.equal(
+      reviewTask.paths.reconstructionScope,
+      "artifacts/reconstruction-scope.json",
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }
