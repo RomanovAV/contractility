@@ -138,6 +138,7 @@ test("workflow API protects mutations and prepares a verified local case", async
     const candidateSha256 = sha256(candidate);
     await writeFile(path.join(roundDirectory, "candidate.docx"), candidate);
     await writeFile(path.join(roundDirectory, "reviews", "review-a.json"), `${JSON.stringify({
+      schemaVersion: "contractility.review-report.v1",
       reviewer: {
         id: "review-a",
         requestedModel: "review-model-a",
@@ -145,6 +146,10 @@ test("workflow API protects mutations and prepares a verified local case", async
       verdict: "pass",
       findings: [],
     })}\n`);
+    await writeFile(
+      path.join(roundDirectory, "reviews", "unrelated-status.json"),
+      `${JSON.stringify({ status: "completed" })}\n`,
+    );
     await writeFile(path.join(roundDirectory, "consensus.json"), `${JSON.stringify({
       status: "done",
       summary: "Замечаний нет.",
@@ -352,11 +357,55 @@ test("workflow API protects mutations and prepares a verified local case", async
   }
   assert.equal(job.status, "completed");
   assert.equal(job.run.state.status, "awaiting-human-approval");
+  assert.equal(job.run.reviews.length, 1);
+  assert.equal(job.run.reviews[0].reviewer.id, "review-a");
   assert.equal(job.run.reviews[0].verdict, "pass");
   assert.equal(job.run.consensus.status, "done");
   assert.equal(job.run.gigacodeStatus.phase, "finished");
   assert.equal(job.run.gigacodeStatus.model, "synthesizer-model");
   assert.equal(job.run.gigacodeStatus.outputChars, 240);
+
+  const candidateResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/files/candidate`,
+    { headers: { "X-Contractility-Token": session.token } },
+  );
+  assert.equal(candidateResponse.status, 200);
+  assert.match(
+    candidateResponse.headers.get("content-disposition"),
+    /candidate-additional-agreement\.docx/,
+  );
+  assert.deepEqual(
+    Buffer.from(await candidateResponse.arrayBuffer()),
+    Buffer.from("candidate docx"),
+  );
+
+  const ticketResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/download-ticket`,
+    {
+      method: "POST",
+      headers: {
+        ...securedHeaders,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ kind: "candidate" }),
+    },
+  );
+  assert.equal(ticketResponse.status, 201);
+  const ticket = await ticketResponse.json();
+  assert.match(ticket.downloadUrl, /^\/api\/workflow\/downloads\/download-[a-f0-9]+$/);
+  const ticketDownloadResponse = await fetch(`${origin}${ticket.downloadUrl}`);
+  assert.equal(ticketDownloadResponse.status, 200);
+  assert.match(
+    ticketDownloadResponse.headers.get("content-disposition"),
+    /candidate-additional-agreement\.docx/,
+  );
+  assert.deepEqual(
+    Buffer.from(await ticketDownloadResponse.arrayBuffer()),
+    Buffer.from("candidate docx"),
+  );
+  const reusedTicketResponse = await fetch(`${origin}${ticket.downloadUrl}`);
+  assert.equal(reusedTicketResponse.status, 404);
+  await reusedTicketResponse.arrayBuffer();
 
   const removedPreviewResponse = await fetch(
     `${origin}/api/workflow/runs/${job.runId}/files/preview`,

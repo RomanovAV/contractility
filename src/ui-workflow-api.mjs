@@ -27,7 +27,7 @@ import {
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const JSON_LIMIT = 128 * 1024 * 1024;
 const FILE_LIMIT = 1024 * 1024 * 1024;
-const SAFE_ID = /^(?:stage|case|run|job)-[a-zA-Z0-9-]+$/;
+const SAFE_ID = /^(?:stage|case|run|job|download)-[a-zA-Z0-9-]+$/;
 const SAFE_DOCUMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,80}$/;
 
 class HttpError extends Error {
@@ -195,12 +195,27 @@ async function readCurrentRound(runDirectory, state) {
   try {
     for (const name of (await readdir(reviewDirectory)).sort()) {
       if (!name.endsWith(".json")) continue;
-      const report = await readJson(path.join(reviewDirectory, name));
-      reviews.push({
-        reviewer: report.reviewer,
-        verdict: report.verdict,
-        findings: report.findings,
-      });
+      try {
+        const report = await readJson(path.join(reviewDirectory, name));
+        if (
+          report?.schemaVersion !== "contractility.review-report.v1"
+          || !report.reviewer
+          || typeof report.reviewer.id !== "string"
+          || !report.reviewer.id
+          || !["pass", "changes-required"].includes(report.verdict)
+          || !Array.isArray(report.findings)
+        ) {
+          continue;
+        }
+        reviews.push({
+          reviewer: report.reviewer,
+          verdict: report.verdict,
+          findings: report.findings,
+        });
+      } catch {
+        // Ignore an incomplete or unrelated JSON artifact without hiding the
+        // other reviewer reports that have already been saved atomically.
+      }
     }
   } catch {
     // Reviews appear atomically near the end of a round; an empty list is a
@@ -343,6 +358,7 @@ export function createUiWorkflowApi({
   const stagingRoot = path.join(dataRoot, "ui-staging");
   const caseRoot = path.join(dataRoot, "cases");
   const jobs = new Map();
+  const downloadTickets = new Map();
 
   async function targetStatus() {
     try {
@@ -575,34 +591,80 @@ export function createUiWorkflowApi({
     sendJson(response, securityHeaders, 200, result);
   }
 
-  async function download(response, runId, kind) {
+  async function resolveDownload(runId, kind) {
     const { runDirectory } = await requireRunDirectory(runId);
     const state = await readJson(path.join(runDirectory, "state.json"));
     if (kind === "candidate") {
       if (!state.candidatePath) throw new HttpError(409, "Кандидат ещё не готов.");
-      await sendFile(
-        response,
-        securityHeaders,
-        safeJoin(runDirectory, state.candidatePath),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "candidate-additional-agreement.docx",
-      );
-      return;
+      return {
+        filePath: safeJoin(runDirectory, state.candidatePath),
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        downloadName: "candidate-additional-agreement.docx",
+      };
     }
     if (kind === "final") {
       if (state.status !== "finalized" || !state.finalPath) {
         throw new HttpError(409, "Финальный DOCX ещё не готов.");
       }
-      await sendFile(
-        response,
-        securityHeaders,
-        safeJoin(runDirectory, state.finalPath),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "final-additional-agreement.docx",
-      );
-      return;
+      return {
+        filePath: safeJoin(runDirectory, state.finalPath),
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        downloadName: "final-additional-agreement.docx",
+      };
     }
     throw new HttpError(404, "Неизвестный файл результата.");
+  }
+
+  async function download(response, runId, kind) {
+    const resolved = await resolveDownload(runId, kind);
+    await sendFile(
+      response,
+      securityHeaders,
+      resolved.filePath,
+      resolved.contentType,
+      resolved.downloadName,
+    );
+  }
+
+  function removeExpiredDownloadTickets() {
+    const now = Date.now();
+    for (const [ticket, downloadTicket] of downloadTickets) {
+      if (downloadTicket.expiresAt <= now) downloadTickets.delete(ticket);
+    }
+  }
+
+  async function createDownloadTicket(response, runId, request) {
+    const body = await readJsonBody(request, 16 * 1024);
+    const resolved = await resolveDownload(runId, String(body.kind ?? ""));
+    removeExpiredDownloadTickets();
+    const ticket = `download-${randomBytes(24).toString("hex")}`;
+    downloadTickets.set(ticket, {
+      ...resolved,
+      expiresAt: Date.now() + 60_000,
+    });
+    sendJson(response, securityHeaders, 201, {
+      downloadUrl: `/api/workflow/downloads/${ticket}`,
+      expiresInSeconds: 60,
+    });
+  }
+
+  async function consumeDownloadTicket(response, ticket) {
+    requireSafeId(ticket, "download ticket");
+    removeExpiredDownloadTickets();
+    const resolved = downloadTickets.get(ticket);
+    if (!resolved) {
+      throw new HttpError(404, "Ссылка скачивания недействительна или истекла.");
+    }
+    downloadTickets.delete(ticket);
+    await sendFile(
+      response,
+      securityHeaders,
+      resolved.filePath,
+      resolved.contentType,
+      resolved.downloadName,
+    );
   }
 
   async function handle(request, response, url) {
@@ -612,6 +674,14 @@ export function createUiWorkflowApi({
       const segments = url.pathname.split("/").filter(Boolean);
       if (segments.length === 3 && segments[2] === "session") {
         await handleSession(request, response);
+        return true;
+      }
+      if (
+        segments.length === 4
+        && segments[2] === "downloads"
+        && request.method === "GET"
+      ) {
+        await consumeDownloadTicket(response, segments[3]);
         return true;
       }
       requireToken(request, sessionToken);
@@ -675,6 +745,14 @@ export function createUiWorkflowApi({
         }
         if (segments.length === 5 && segments[4] === "finalize" && request.method === "POST") {
           await finalize(response, runId);
+          return true;
+        }
+        if (
+          segments.length === 5
+          && segments[4] === "download-ticket"
+          && request.method === "POST"
+        ) {
+          await createDownloadTicket(response, runId, request);
           return true;
         }
         if (

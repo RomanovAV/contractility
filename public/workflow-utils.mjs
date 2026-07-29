@@ -74,6 +74,17 @@ export function formationLaunchAvailability({
   };
 }
 
+export function normalizeReviewerReports(reports) {
+  if (!Array.isArray(reports)) return [];
+  return reports.filter((report) =>
+    report
+    && report.reviewer
+    && typeof report.reviewer.id === "string"
+    && report.reviewer.id.length > 0
+    && ["pass", "changes-required"].includes(report.verdict)
+    && Array.isArray(report.findings));
+}
+
 export function normalizeDocumentOrder(documents) {
   return documents.map((document, index) => ({
     ...document,

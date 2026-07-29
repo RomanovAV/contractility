@@ -16,6 +16,7 @@ import {
   formationLaunchAvailability,
   mergeDocumentBatch,
   moveHistoricalDocument,
+  normalizeReviewerReports,
   validateDraftAgreementFile,
 } from "./workflow-utils.mjs";
 
@@ -1243,7 +1244,10 @@ function renderGigacodeStatus(status) {
 
 function renderReviewers(run) {
   elements["reviewers-grid"].replaceChildren();
-  const reports = new Map((run?.reviews ?? []).map((report) => [report.reviewer.id, report]));
+  const validReports = normalizeReviewerReports(run?.reviews);
+  const reports = new Map(
+    validReports.map((report) => [report.reviewer.id, report]),
+  );
   const agentStatuses = new Map();
   for (const agent of run?.agents ?? []) {
     if (!agent.reviewerId || agent.round !== run?.state?.round) continue;
@@ -1550,33 +1554,42 @@ async function finalizeFormation() {
 async function downloadRunFile(kind) {
   if (!state.formationRunId) return;
   try {
-    const response = await workflowFetch(
-      `/runs/${encodeURIComponent(state.formationRunId)}/files/${encodeURIComponent(kind)}`,
+    const ticket = await workflowJson(
+      `/runs/${encodeURIComponent(state.formationRunId)}/download-ticket`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+      },
     );
-    const names = {
-      candidate: "candidate-additional-agreement.docx",
-      final: "final-additional-agreement.docx",
-    };
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = globalThis.document.createElement("a");
-    anchor.href = url;
-    anchor.download = names[kind] ?? "contractility-result";
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (
+      typeof ticket.downloadUrl !== "string"
+      || !ticket.downloadUrl.startsWith("/api/workflow/downloads/")
+    ) {
+      throw new Error("API не вернул локальную ссылку скачивания.");
+    }
+    globalThis.location.assign(ticket.downloadUrl);
   } catch (error) {
     setError(`Не удалось скачать результат: ${error.message ?? error}`);
   }
 }
 
-function download(name, type, content) {
-  const blob = new Blob([content], { type });
+function triggerBlobDownload(name, blob) {
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
+  const anchor = globalThis.document.createElement("a");
   anchor.href = url;
   anchor.download = name;
+  anchor.style.display = "none";
+  globalThis.document.body.append(anchor);
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 60_000);
+}
+
+function download(name, type, content) {
+  triggerBlobDownload(name, new Blob([content], { type }));
 }
 
 function baseFileName() {

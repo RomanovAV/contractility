@@ -8,6 +8,7 @@ import {
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeDocumentOrder,
+  normalizeReviewerReports,
   validateDraftAgreementFile,
 } from "../public/workflow-utils.mjs";
 
@@ -102,6 +103,20 @@ test("formation launch stays actionable when target configuration needs a refres
     formationBusy: false,
     formationJobActive: true,
   }).enabled, false);
+});
+
+test("normalizeReviewerReports ignores incomplete and unrelated JSON artifacts", () => {
+  const valid = {
+    reviewer: { id: "legal-a", requestedModel: "review-model" },
+    verdict: "pass",
+    findings: [],
+  };
+  assert.deepEqual(normalizeReviewerReports([
+    { status: "completed" },
+    { reviewer: null, verdict: "pass", findings: [] },
+    { reviewer: { id: "legal-b" }, verdict: "unknown", findings: [] },
+    valid,
+  ]), [valid]);
 });
 
 test("normalizeDocumentOrder keeps the contract first and relabels amendments", () => {
