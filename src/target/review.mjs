@@ -24,16 +24,68 @@ function nonEmptyString(value, field) {
   return value.trim();
 }
 
-function parseExactJson(text, name) {
-  const trimmed = String(text ?? "").trim();
-  if (!trimmed || trimmed.startsWith("```") || trimmed.endsWith("```")) {
-    throw new TypeError(`${name}: ожидается чистый JSON без Markdown.`);
+function embeddedJsonObjects(text) {
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (depth > 0 && character === "\"") {
+      inString = true;
+    } else if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
   }
+  return objects;
+}
+
+function parseJsonOutput(text, name) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) {
+    throw new TypeError(`${name}: ответ пуст.`);
+  }
+  let exactError;
   try {
     return JSON.parse(trimmed);
   } catch (error) {
-    throw new TypeError(`${name}: некорректный JSON: ${error.message}`);
+    exactError = error;
   }
+
+  const candidates = embeddedJsonObjects(trimmed)
+    .map((candidate) => {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        return null;
+      }
+    })
+    .filter((candidate) =>
+      candidate && typeof candidate === "object" && !Array.isArray(candidate));
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    throw new TypeError(`${name}: ответ содержит несколько JSON-объектов.`);
+  }
+  throw new TypeError(`${name}: некорректный JSON: ${exactError.message}`);
 }
 
 function normalizeFinding(value) {
@@ -72,7 +124,7 @@ function normalizeFinding(value) {
 }
 
 export function parseReviewReport(text) {
-  const value = parseExactJson(text, "review report");
+  const value = parseJsonOutput(text, "review report");
   if (!["pass", "changes-required"].includes(value?.verdict)) {
     throw new TypeError("review.verdict должен быть pass или changes-required.");
   }
@@ -90,7 +142,7 @@ export function parseReviewReport(text) {
 }
 
 export function parseSynthesisResult(text, knownFindingIds) {
-  const value = parseExactJson(text, "review synthesis");
+  const value = parseJsonOutput(text, "review synthesis");
   if (!["done", "fixed", "blocked"].includes(value?.status)) {
     throw new TypeError("synthesis.status должен быть done, fixed или blocked.");
   }
@@ -156,4 +208,3 @@ ${escaped}
 
 ${reviewOutputContract()}`;
 }
-

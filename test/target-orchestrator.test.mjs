@@ -212,8 +212,24 @@ test("producer status parser rejects missing or ambiguous status objects", () =>
   );
 });
 
-test("review parser rejects prose and accepts domain findings", () => {
-  assert.throws(() => parseReviewReport("```json\n{}\n```"), /без Markdown/);
+test("review parser accepts one JSON object wrapped in harmless model formatting", () => {
+  assert.deepEqual(
+    parseReviewReport('```json\n{"verdict":"pass","findings":[]}\n```'),
+    { verdict: "pass", findings: [] },
+  );
+  assert.deepEqual(
+    parseReviewReport('Оформил результат ревью:\n{"verdict":"pass","findings":[]}'),
+    { verdict: "pass", findings: [] },
+  );
+  assert.throws(
+    () => parseReviewReport(
+      '{"verdict":"pass","findings":[]}\n{"verdict":"pass","findings":[]}',
+    ),
+    /несколько JSON-объектов/,
+  );
+});
+
+test("review parser accepts domain findings", () => {
   const report = parseReviewReport(JSON.stringify({
     verdict: "changes-required",
     findings: [{
