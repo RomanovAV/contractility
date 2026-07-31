@@ -14,7 +14,12 @@ Security boundary:
 Required work:
 1. Read `reconstruction-task.json`; resolve every path relative to the current working directory.
 2. Establish the base-contract identity only from the evidence document whose
-   role is `contract`. Use both its contract number and contract date.
+   role is `contract`. Search every page of that document and use both its
+   contract number and contract date. If the title-page identity is corrupted,
+   an exact, unambiguous self-identification repeated on another page of the
+   same base contract is acceptable; cite that readable page. Never infer the
+   identity from a filename, an additional agreement, the proposed DOCX, or a
+   partial/garbled value.
 3. Treat a signed evidence PDF as a container, not necessarily one legal
    instrument. Split every `additional-agreement` document into each separately
    headed or signed agreement it contains and identify its source pages,
@@ -49,7 +54,8 @@ Required work:
 10. Parse `artifacts/reconstruction-scope.json` with a JSON parser and verify its
    required objects and arrays before returning the final status.
 11. Do not inspect or modify the candidate OOXML package during this phase.
-12. If the base-contract identity or an instrument's referenced contract is
+12. Only after examining every page of the applicable evidence document, if
+   the base-contract identity or an instrument's referenced contract is still
    absent/unreadable, sources conflict without a policy resolution, or another
    required source is absent, write `artifacts/blocker.json` and stop.
 

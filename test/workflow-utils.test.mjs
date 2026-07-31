@@ -6,6 +6,7 @@ import {
   createReviewerMetadataLines,
   createSemanticSignedDocuments,
   formationLaunchAvailability,
+  formatRunBlockerMessage,
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeDocumentOrder,
@@ -104,6 +105,16 @@ test("formation launch stays actionable when target configuration needs a refres
     formationBusy: false,
     formationJobActive: true,
   }).enabled, false);
+});
+
+test("base contract OCR blocker gives a safe manual recovery path", () => {
+  const original = "base-contract identity unreadable: document-1 has severe OCR corruption";
+  const formatted = formatRunBlockerMessage(original);
+  assert.match(formatted, /base-contract identity unreadable/);
+  assert.match(formatted, /Исправьте распознанный текст в «Исходный договор»/);
+  assert.match(formatted, /точные номер и дату/);
+  assert.match(formatted, /снова нажмите «Запустить формирование»/);
+  assert.equal(formatRunBlockerMessage("Reviewer failed"), "Reviewer failed");
 });
 
 test("normalizeReviewerReports ignores incomplete and unrelated JSON artifacts", () => {

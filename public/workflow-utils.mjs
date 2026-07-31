@@ -74,6 +74,20 @@ export function formationLaunchAvailability({
   };
 }
 
+export function formatRunBlockerMessage(message) {
+  const text = String(message ?? "").trim();
+  if (!text) return "";
+  const baseIdentityFailure = /base[- ]contract identity|идентичност[ьи] базового договора/i
+    .test(text);
+  const unreadableOcr = /unreadable|OCR corruption|нечитаем|не удалось прочитать|искажен[^.]*OCR/i
+    .test(text);
+  if (!baseIdentityFailure || !unreadableOcr) return text;
+  return `${text} Исправьте распознанный текст в «Исходный договор»: восстановите по `
+    + "изображению точные номер и дату на читаемой странице, затем снова нажмите "
+    + "«Запустить формирование». Если реквизиты не читаются ни на одной странице, "
+    + "нужен более качественный скан.";
+}
+
 export function normalizeReviewerReports(reports) {
   if (!Array.isArray(reports)) return [];
   return reports.filter((report) =>

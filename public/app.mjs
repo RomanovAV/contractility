@@ -15,6 +15,7 @@ import {
   createReviewerMetadataLines,
   createFormationTextExport,
   formationLaunchAvailability,
+  formatRunBlockerMessage,
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeReviewerReports,
@@ -1154,8 +1155,9 @@ function setRunStatus(title, detail, tone = "") {
 }
 
 function setRunBlocker(message) {
-  elements["run-blocker"].textContent = message;
-  elements["run-blocker"].hidden = !message;
+  const formatted = formatRunBlockerMessage(message);
+  elements["run-blocker"].textContent = formatted;
+  elements["run-blocker"].hidden = !formatted;
 }
 
 function renderRunStages(runState) {
