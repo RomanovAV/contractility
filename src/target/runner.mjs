@@ -461,7 +461,9 @@ async function runReviewer({
   const reviewTaskPath = path.join(roundDirectory, `review-task-${reviewer.id}.json`);
   await atomicWriteJson(reviewTaskPath, task);
   const basePrompt = await loadPrompt("reviewer.md");
-  const prompt = `${basePrompt.trim()}\n\nReview task: review-task-${reviewer.id}.json\n\n${reviewOutputContract()}`;
+  const reviewTaskName = `review-task-${reviewer.id}.json`;
+  const promptPrefix = `${basePrompt.trim()}\n\nReview task: ${reviewTaskName}`;
+  const prompt = `${promptPrefix}\n\n${reviewOutputContract()}`;
   let result = await runGigacode({
     config: executorConfig(config),
     model: reviewer.model,
@@ -488,7 +490,7 @@ async function runReviewer({
       result = await runGigacode({
         config: executorConfig(config),
         model: reviewer.model,
-        prompt: formatRetryPrompt(result.output),
+        prompt: `${promptPrefix}\n\n${formatRetryPrompt(result.output, error)}`,
         cwd: roundDirectory,
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
         onEvent: onGigacodeEvent,

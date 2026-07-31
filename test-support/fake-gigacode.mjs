@@ -27,6 +27,21 @@ function emit(result) {
   })}\n`);
 }
 
+function emitText(result) {
+  process.stdout.write(`${JSON.stringify({
+    type: "system",
+    session_id: `fake-${model}`,
+    model,
+  })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    type: "result",
+    session_id: `fake-${model}`,
+    model,
+    result,
+    usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+  })}\n`);
+}
+
 if (prompt.includes('Return exactly {"status":"ok"}')) {
   emit({ status: "ok" });
 } else if (prompt.includes("reconstruct the current contract from signed OCR evidence")) {
@@ -184,7 +199,19 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   if (mode.includes("slow-review") && model === "review-model-c") {
     await delay(1000);
   }
-  if (mode === "fix-once") {
+  if (
+    mode.includes("review-format-retry")
+    && !prompt.includes("Structured-output retry.")
+    && model === "review-model-a"
+  ) {
+    emitText("I've verified the candidate and saved the report.");
+  } else if (
+    mode.includes("review-format-retry")
+    && !prompt.includes("Structured-output retry.")
+    && model === "review-model-b"
+  ) {
+    emitText("JSON сохранён в отчёт reviewer-а.");
+  } else if (mode === "fix-once") {
     const roundDirectory = process.cwd();
     const xml = await readFile(path.join(roundDirectory, "package/word/document.xml"), "utf8");
     if (!xml.includes("исправлено")) {

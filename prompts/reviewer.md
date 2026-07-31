@@ -1,7 +1,8 @@
 Phase: independent read-only review.
 
 The current working directory is the complete workspace for this round.
-Reviewer id, focus, and all relative paths are in `review-task.json`.
+Reviewer id, focus, and all relative paths are in the review-task file named
+at the end of this prompt.
 The immutable candidate hash, OCR evidence manifest, reconstructed contract,
 reconstruction scope, change register, change plan, candidate DOCX, and
 extracted OOXML package are in this round directory.
@@ -13,7 +14,7 @@ Security boundary:
 - verify every claim directly against the supplied sources;
 - do not report a majority opinion: report only concrete defects within your assigned focus.
 
-Review the exact candidate hash named in `review-task.json`.
+Review the exact candidate hash named in the review-task file.
 Resolve every path relative to the current working directory.
 Read `artifacts/reconstruction-scope.json` before evaluating historical
 evidence. Do not require the candidate to reflect an instrument classified as
@@ -40,4 +41,6 @@ register's `unresolvedFields`, and was not replaced with invented data. This
 exception does not cover an omitted or ambiguous intended legal or commercial
 change.
 
-The orchestrator appends the exact JSON output contract to this prompt.
+The orchestrator appends the exact JSON output contract to this prompt. Return
+the report only in the final assistant response. Never save it to a file or
+replace it with a prose confirmation that review is complete.

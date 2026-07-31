@@ -28,7 +28,10 @@ import {
   parseProducerStatus,
   verifyRun,
 } from "../src/target/runner.mjs";
-import { parseReviewReport } from "../src/target/review.mjs";
+import {
+  formatRetryPrompt,
+  parseReviewReport,
+} from "../src/target/review.mjs";
 import { validateReconstructionScope } from "../src/target/scope.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -250,6 +253,44 @@ test("review parser accepts domain findings", () => {
   assert.match(report.findings[0].id, /^finding-/);
 });
 
+test("review parser supports exact non-paginated artifact findings", () => {
+  const report = parseReviewReport(JSON.stringify({
+    verdict: "changes-required",
+    findings: [{
+      severity: "blocker",
+      category: "security",
+      target: "candidate.docx",
+      sourceDocumentId: "candidate.docx",
+      page: null,
+      clause: "word/_rels/document.xml.rels rId7",
+      evidence: "TargetMode=External",
+      observed: "The candidate retains an external OOXML relationship",
+      impact: "Opening the document can contact an external resource",
+      proposedAction: "Remove the external relationship",
+      confidence: 1,
+    }],
+  }));
+  assert.equal(report.findings[0].page, null);
+  assert.throws(
+    () => parseReviewReport(JSON.stringify({
+      verdict: "changes-required",
+      findings: [{ ...report.findings[0], page: "N/A" }],
+    })),
+    /положительным целым числом или null/,
+  );
+});
+
+test("review retry names the validation failure and requires re-verification", () => {
+  const prompt = formatRetryPrompt(
+    "I've verified the candidate and saved JSON.",
+    new TypeError("finding.page должен быть положительным целым числом."),
+  );
+  assert.match(prompt, /<UNTRUSTED_VALIDATION_ERROR>\s+finding\.page/);
+  assert.match(prompt, /Perform the assigned review again/);
+  assert.match(prompt, /Do not infer a\s+pass verdict/);
+  assert.match(prompt, /entire final assistant response must be exactly one JSON object/);
+});
+
 test("target config allows one model for every agent role", () => {
   const config = targetConfig("/tmp/runs");
   config.models.reviewers = config.models.reviewers.map((reviewer) => ({
@@ -360,7 +401,8 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     },
     outputRoot: path.join(temporary, "cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "producer-cancel-slow-review-malformed-plan";
+  process.env.FAKE_GIGACODE_MODE =
+    "producer-cancel-slow-review-malformed-plan-review-format-retry";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -447,6 +489,14 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
       && status.status === "completed"));
     assert.ok(agentStatuses.some((status) =>
       status.reviewerId === "legal-c" && status.status === "completed"));
+    assert.ok(agentStatuses.some((status) =>
+      status.role === "reviewer-format"
+      && status.reviewerId === "legal-a"
+      && status.status === "completed"));
+    assert.ok(agentStatuses.some((status) =>
+      status.role === "reviewer-format"
+      && status.reviewerId === "legal-b"
+      && status.status === "completed"));
     assert.ok(agentStatuses.every((status) => status.attempt === 1));
     await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
     await assert.rejects(() => approveRun({

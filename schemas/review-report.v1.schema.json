@@ -30,9 +30,16 @@
           "impact",
           "proposedAction",
           "confidence"
-        ]
+        ],
+        "properties": {
+          "page": {
+            "anyOf": [
+              { "type": "integer", "minimum": 1 },
+              { "type": "null" }
+            ]
+          }
+        }
       }
     }
   }
 }
-
