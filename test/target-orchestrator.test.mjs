@@ -32,7 +32,10 @@ import {
   formatRetryPrompt,
   parseReviewReport,
 } from "../src/target/review.mjs";
-import { validateReconstructionScope } from "../src/target/scope.mjs";
+import {
+  HUMAN_REQUIRED_MARKER,
+  validateReconstructionScope,
+} from "../src/target/scope.mjs";
 
 const execFileAsync = promisify(execFile);
 const fakeGigacode = path.resolve("test-support/fake-gigacode.mjs");
@@ -352,6 +355,43 @@ test("reconstruction scope validates contract identity after harmless normalizat
   );
 });
 
+test("reconstruction scope preserves unreadable identities for human completion", () => {
+  const evidenceManifest = {
+    documents: [
+      { id: "document-1", role: "contract", pageCount: 1 },
+      { id: "document-2", role: "additional-agreement", pageCount: 1 },
+    ],
+  };
+  const scope = {
+    schemaVersion: "contractility.reconstruction-scope.v1",
+    baseContract: {
+      sourceDocumentId: "document-1",
+      number: HUMAN_REQUIRED_MARKER,
+      date: HUMAN_REQUIRED_MARKER,
+      page: 1,
+      evidence: "OCR: #00), 2077 г.",
+    },
+    instruments: [{
+      sourceDocumentId: "document-2",
+      pages: [1],
+      agreementNumber: "8",
+      agreementDate: "15.02.2024",
+      referencedContractNumber: "32-01/10",
+      referencedContractDate: "01.12.2011",
+      decision: "unresolved",
+      reason: "Идентичность базового договора требует заполнения человеком.",
+    }],
+  };
+  assert.equal(validateReconstructionScope(scope, evidenceManifest), scope);
+  assert.throws(
+    () => validateReconstructionScope({
+      ...scope,
+      instruments: [{ ...scope.instruments[0], decision: "included" }],
+    }, evidenceManifest),
+    /должен быть unresolved/,
+  );
+});
+
 test("full run recovers a complete producer candidate after known GigaCode CLI cancellation", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-target-"));
@@ -402,7 +442,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     outputRoot: path.join(temporary, "cases"),
   });
   process.env.FAKE_GIGACODE_MODE =
-    "producer-cancel-slow-review-malformed-plan-review-format-retry";
+    "producer-cancel-slow-review-malformed-plan-review-format-retry-unreadable-base-identity";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -452,8 +492,13 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     assert.equal(producerTask.policy.conflictResolution, "later-signed-amendment-wins");
     assert.equal(
       producerTask.policy.placeholderPolicy,
-      "resolve-from-supplied-content-or-preserve-empty-template-field",
+      "resolve-or-preserve-empty-and-mark-human-required",
     );
+    assert.equal(
+      producerTask.policy.unresolvedFieldMarker,
+      "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+    );
+    assert.equal(producerTask.policy.allowUnresolvedFields, true);
     assert.equal(producerTask.policy.allowUnresolvedTemplateFields, true);
     assert.equal(
       producerTask.policy.bundledDocumentPolicy,
@@ -466,6 +511,27 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     assert.equal(
       producerTask.policy.fullClauseReplacementPolicy,
       "supersede-entire-prior-clause-body-including-omitted-tiers-and-exceptions",
+    );
+    const unresolvedScope = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/artifacts/reconstruction-scope.json"),
+      "utf8",
+    ));
+    assert.equal(unresolvedScope.baseContract.number, HUMAN_REQUIRED_MARKER);
+    assert.equal(unresolvedScope.baseContract.date, HUMAN_REQUIRED_MARKER);
+    assert.ok(unresolvedScope.instruments.every(
+      (instrument) => instrument.decision === "unresolved",
+    ));
+    const unresolvedRegister = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/artifacts/change-register.json"),
+      "utf8",
+    ));
+    assert.equal(unresolvedRegister.unresolvedFields[0].marker, HUMAN_REQUIRED_MARKER);
+    assert.match(
+      await readFile(
+        path.join(run.runDirectory, "rounds/01/package/word/document.xml"),
+        "utf8",
+      ),
+      /ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ/,
     );
     const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
     assert.match(events, /"event":"gigacode\.recovered"/);

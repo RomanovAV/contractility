@@ -32,6 +32,16 @@ function sessionIdentity(session) {
   if (session === "producer-apply") {
     return { role: "producer-apply", round: 1, reviewerId: null };
   }
+  const unresolvedRetry = session.match(
+    /^producer-(reconstruct|plan|apply)-unresolved-retry$/,
+  );
+  if (unresolvedRetry) {
+    return {
+      role: `producer-${unresolvedRetry[1]}`,
+      round: 1,
+      reviewerId: null,
+    };
+  }
   return { role: "gigacode", round: null, reviewerId: null };
 }
 

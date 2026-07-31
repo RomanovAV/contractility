@@ -34,12 +34,13 @@ agreement and the candidate locator in `target`. Cite a signed document and page
 when the finding concerns the reconstructed baseline, chronology, or a claim
 that must be supported by signed evidence. Do not invent a signed source for an
 intent that is declared only by the proposed agreement.
-When the task policy has `allowUnresolvedTemplateFields=true`, do not report a
-finding merely because a template-only requisite is blank and no value exists
-in the supplied inputs. Confirm that it remains blank, is listed in the change
-register's `unresolvedFields`, and was not replaced with invented data. This
-exception does not cover an omitted or ambiguous intended legal or commercial
-change.
+When the task policy has `allowUnresolvedFields=true`, do not report a finding
+merely because any template, legal, commercial, identity, or clause value could
+not be established from the supplied inputs. Confirm that the value remains
+empty, the exact `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]` marker is visible at or next
+to its target, it is listed in the change register's `unresolvedFields`, and no
+value was invented. Do report a finding if any of those safeguards is missing.
+An instrument with `decision=unresolved` must not be treated as applied.
 
 The orchestrator appends the exact JSON output contract to this prompt. Return
 the report only in the final assistant response. Never save it to a file or

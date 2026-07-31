@@ -11,6 +11,7 @@ const valueAfter = (name) => {
 const model = valueAfter("--model");
 const prompt = valueAfter("-p");
 const mode = process.env.FAKE_GIGACODE_MODE ?? "pass";
+const humanRequiredMarker = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
 
 function emit(result) {
   process.stdout.write(`${JSON.stringify({
@@ -57,14 +58,21 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
     (document) => document.role === "contract",
   );
   const mixedBundle = mode.includes("mixed-contract-bundle");
+  const unreadableBaseIdentity = mode.includes("unreadable-base-identity");
   const scope = {
     schemaVersion: "contractility.reconstruction-scope.v1",
     baseContract: {
       sourceDocumentId: baseDocument.id,
-      number: mixedBundle ? "32-01/10" : "TEST-1",
-      date: mixedBundle ? "01.12.2011" : "01.01.2020",
+      number: unreadableBaseIdentity
+        ? humanRequiredMarker
+        : mixedBundle ? "32-01/10" : "TEST-1",
+      date: unreadableBaseIdentity
+        ? humanRequiredMarker
+        : mixedBundle ? "01.12.2011" : "01.01.2020",
       page: 1,
-      evidence: mixedBundle
+      evidence: unreadableBaseIdentity
+        ? "OCR: #00), 2077 г."
+        : mixedBundle
         ? "Договор №32-01/10 от 01.12.2011"
         : "Договор №TEST-1 от 01.01.2020",
     },
@@ -112,8 +120,10 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
           agreementDate: mixedBundle ? "01.01.2024" : "02.01.2020",
           referencedContractNumber: mixedBundle ? "32-01/10" : "TEST-1",
           referencedContractDate: mixedBundle ? "01.12.2011" : "01.01.2020",
-          decision: "included",
-          reason: "Номер и дата базового договора совпадают.",
+          decision: unreadableBaseIdentity ? "unresolved" : "included",
+          reason: unreadableBaseIdentity
+            ? "Идентичность базового договора требует заполнения человеком."
+            : "Номер и дата базового договора совпадают.",
         }];
       }),
   };
@@ -123,7 +133,10 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   );
   await writeFile(
     path.join(artifacts, "current-contract.md"),
-    mixedBundle
+    unreadableBaseIdentity
+      ? `${"# Действующая редакция\n\nНомер и дата: "
+          + `${humanRequiredMarker}. Неподтверждённые инструменты не применены.\n\n`}`.repeat(4)
+      : mixedBundle
       ? [
         "# Действующая редакция",
         "",
@@ -147,6 +160,14 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
     )
   ) {
     emit({ status: "blocked", reason: "Missing mixed-contract scope policy." });
+  } else if (
+    unreadableBaseIdentity
+    && !prompt.includes("Recovery after unresolved model-fill values")
+  ) {
+    emit({
+      status: "blocked",
+      reason: "base-contract identity unreadable: OCR values #00) and 2077 г.",
+    });
   } else {
     emit({ status: "reconstruction-ready" });
   }
@@ -159,11 +180,20 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   const artifacts = path.join(process.cwd(), "artifacts");
   const malformedPlan = mode.includes("malformed-plan")
     && !prompt.includes("Recovery after invalid JSON artifacts");
+  const unresolvedFields = mode.includes("unreadable-base-identity")
+    ? [{
+      target: "Реквизиты базового договора",
+      reason: "Номер и дата не читаются в OCR.",
+      sourceDocumentId: "document-1",
+      page: 1,
+      marker: humanRequiredMarker,
+    }]
+    : [];
   await writeFile(
     path.join(artifacts, "change-register.json"),
     malformedPlan
       ? `{"changes":[{"evidence":"ПАО "ВымпелКом""}]}\n`
-      : `${JSON.stringify({ changes: [] }, null, 2)}\n`,
+      : `${JSON.stringify({ changes: [], unresolvedFields }, null, 2)}\n`,
   );
   await writeFile(
     path.join(artifacts, "change-plan.json"),
@@ -176,6 +206,17 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   );
   await readFile(path.join(process.cwd(), task.paths.changePlan), "utf8");
   await readFile(path.join(process.cwd(), task.paths.reconstructionScope), "utf8");
+  if (mode.includes("unreadable-base-identity")) {
+    const documentPath = path.join(process.cwd(), "package/word/document.xml");
+    const xml = await readFile(documentPath, "utf8");
+    await writeFile(
+      documentPath,
+      xml.replace(
+        "Тестовое дополнительное соглашение",
+        `Тестовое дополнительное соглашение — ${humanRequiredMarker}`,
+      ),
+    );
+  }
   if (mode.includes("producer-cancel")) {
     process.stdout.write(`${JSON.stringify({
       type: "system",

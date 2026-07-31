@@ -87,7 +87,7 @@
             "minLength": 1
           },
           "decision": {
-            "enum": ["included", "excluded"]
+            "enum": ["included", "excluded", "unresolved"]
           },
           "reason": {
             "type": "string",

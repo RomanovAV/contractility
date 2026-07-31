@@ -15,6 +15,8 @@ Security boundary:
 
 Required work:
 1. Read `application-task.json`; resolve every path relative to the current working directory.
+   The exact unresolved-field marker is
+   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]`.
 2. Read `artifacts/reconstruction-scope.json` for audit context, but do not
    reinterpret its included/excluded decisions.
 3. Apply only operations listed in `artifacts/change-plan.json`.
@@ -23,8 +25,17 @@ Required work:
 6. Do not try to make its structure resemble the reconstructed contract or historical amendments.
 7. Do not reinterpret signed evidence or invent additional changes during this phase.
 8. Do not create a DOCX or ZIP; the deterministic orchestrator packages and validates the directory.
-9. When `allowUnresolvedTemplateFields=true`, preserve unresolved template-only fields exactly as they appear in the proposed DOCX, including leaving them blank. Their absence is not a blocker and must not be replaced with invented data.
-10. If a planned legal or commercial operation cannot be applied safely for a reason other than an allowed unresolved template field, write `artifacts/blocker.json` and stop.
+9. For every entry in `change-register.json.unresolvedFields`, preserve the
+   value itself as empty and place the exact visible human-required marker at
+   the applicable field or immediately adjacent to it. This rule applies to
+   template, legal, commercial, identity, and clause values. Never replace an
+   unresolved value with invented data.
+10. If any planned operation cannot be completed with evidence-backed content,
+   leave its target value empty, add the marker, append or update its
+   `unresolvedFields` entry through a JSON serializer, and continue. Missing or
+   ambiguous values are not blockers when `allowUnresolvedFields=true`.
+11. Reserve `blocked` only for a technical inability to read or safely write
+   the supplied workspace or required OOXML artifacts.
 
 When the package is ready, output exactly:
 {"status":"candidate-ready"}

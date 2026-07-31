@@ -16,6 +16,8 @@ Security boundary:
 
 Required work:
 1. Read `change-plan-task.json`; resolve every path relative to the current working directory.
+   The exact marker for any value the model cannot establish is
+   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]`.
 2. Read `artifacts/reconstruction-scope.json`. Treat its included/excluded
    decisions as the authoritative evidence boundary for this phase. Never use an
    excluded instrument to establish the current contract or create a change,
@@ -32,9 +34,21 @@ Required work:
 8. Write `artifacts/change-register.json`; every planned change must identify whether it comes from the proposed agreement or is a consistency correction, with supporting signed evidence where applicable.
 9. Write `artifacts/change-plan.json` with an `operations` array. Every operation must identify its target OOXML part, semantic target, expected current text, required replacement, and related change-register id.
 10. Do not modify anything under `package/` during this phase.
-11. A blank template field or placeholder is not a structural conflict. First search the entire proposed agreement and supplied evidence for its value. If a template-only requisite (for example an EDI participant id, contact detail, or bank requisite) is absent from all supplied inputs, preserve that field as it appears in the template, record it under an `unresolvedFields` array in `artifacts/change-register.json`, create no operation that invents its value, and continue. Under `allowUnresolvedTemplateFields=true`, a missing template-only requisite must never produce `artifacts/blocker.json` or a `blocked` status.
-12. Distinguish an unresolved template-only field from an ambiguous intended legal or commercial change. Only the latter may require `artifacts/blocker.json` and stop the process.
-13. Create both JSON artifacts through a JSON serializer; never concatenate or manually escape document text. Before returning the final status, parse both completed files with a JSON parser and verify that `change-register.json` has a `changes` array and `change-plan.json` has an `operations` array.
+11. First search the entire proposed agreement and supplied evidence for every
+   required value. If any template, legal, commercial, identity, or clause value
+   cannot be established exactly, do not invent it and do not stop. Preserve
+   the target field empty, plan an adjacent visible human-required marker, and
+   record an object for it under `unresolvedFields` in
+   `artifacts/change-register.json`, including its target, reason, available
+   source locator, and marker.
+12. Instruments marked `decision=unresolved` were intentionally not applied.
+   Carry that limitation into `unresolvedFields`; do not silently treat their
+   content as part of the current contract.
+13. Missing or ambiguous values must never produce `artifacts/blocker.json` or
+   a `blocked` status when `allowUnresolvedFields=true`. Reserve `blocked` only
+   for a technical inability to read the workspace or create the required
+   artifacts.
+14. Create both JSON artifacts through a JSON serializer; never concatenate or manually escape document text. Before returning the final status, parse both completed files with a JSON parser and verify that `change-register.json` has both `changes` and `unresolvedFields` arrays and `change-plan.json` has an `operations` array.
 
 When the change register and plan are ready, output exactly:
 {"status":"change-plan-ready"}

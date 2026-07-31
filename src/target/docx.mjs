@@ -168,6 +168,14 @@ export async function packageInventory(packageDirectory) {
   return inventory;
 }
 
+export async function editablePackageContainsText(packageDirectory, text) {
+  for (const file of await walk(packageDirectory)) {
+    if (!EDITABLE_PARTS.some((pattern) => pattern.test(file.relative))) continue;
+    if ((await readFile(file.absolute, "utf8")).includes(text)) return true;
+  }
+  return false;
+}
+
 export function comparePreservedParts(referenceInventory, candidateInventory) {
   const failures = [];
   for (const [relative, expected] of Object.entries(referenceInventory)) {

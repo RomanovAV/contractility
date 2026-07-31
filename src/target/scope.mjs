@@ -4,6 +4,12 @@ function requireNonEmptyString(value, label) {
   }
 }
 
+export const HUMAN_REQUIRED_MARKER = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
+
+function requiresHuman(value) {
+  return String(value ?? "").trim() === HUMAN_REQUIRED_MARKER;
+}
+
 function normalizedContractNumber(value) {
   return String(value)
     .normalize("NFKC")
@@ -61,6 +67,8 @@ export function validateReconstructionScope(scope, evidenceManifest) {
   const coveredDocumentIds = new Set();
   const baseNumber = normalizedContractNumber(scope.baseContract.number);
   const baseDate = normalizedContractDate(scope.baseContract.date);
+  const baseIdentityResolved = !requiresHuman(scope.baseContract.number)
+    && !requiresHuman(scope.baseContract.date);
   for (const [index, instrument] of scope.instruments.entries()) {
     const label = `instruments[${index}]`;
     const sourceDocument = documentsById.get(instrument?.sourceDocumentId);
@@ -88,10 +96,21 @@ export function validateReconstructionScope(scope, evidenceManifest) {
       instrument.referencedContractDate,
       `${label}.referencedContractDate`,
     );
-    if (!["included", "excluded"].includes(instrument.decision)) {
-      throw new TypeError(`${label}.decision должен быть included или excluded.`);
+    if (!["included", "excluded", "unresolved"].includes(instrument.decision)) {
+      throw new TypeError(`${label}.decision должен быть included, excluded или unresolved.`);
     }
     requireNonEmptyString(instrument.reason, `${label}.reason`);
+    const referencedIdentityResolved = !requiresHuman(instrument.referencedContractNumber)
+      && !requiresHuman(instrument.referencedContractDate);
+    if (!baseIdentityResolved || !referencedIdentityResolved) {
+      if (instrument.decision !== "unresolved") {
+        throw new TypeError(
+          `${label}.decision должен быть unresolved при неподтверждённой идентичности договора.`,
+        );
+      }
+      continue;
+    }
+    if (instrument.decision === "unresolved") continue;
     const referencesBaseContract =
       normalizedContractNumber(instrument.referencedContractNumber) === baseNumber
       && normalizedContractDate(instrument.referencedContractDate) === baseDate;

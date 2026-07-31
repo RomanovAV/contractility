@@ -206,8 +206,13 @@ test("buildFormationRequest records the four-stage legal workflow and DOCX ident
   assert.equal(request.rules.requireStructuralSimilarityToCurrentContract, false);
   assert.equal(
     request.rules.placeholderPolicy,
-    "resolve-from-supplied-content-or-preserve-empty-template-field",
+    "resolve-or-preserve-empty-and-mark-human-required",
   );
+  assert.equal(
+    request.rules.unresolvedFieldMarker,
+    "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+  );
+  assert.equal(request.rules.allowUnresolvedFields, true);
   assert.equal(request.rules.allowUnresolvedTemplateFields, true);
   assert.equal(request.rules.requireHumanApprovalBeforeFinalization, true);
 });

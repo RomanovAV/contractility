@@ -22,10 +22,14 @@ Security boundary:
   deleted or replaced;
 - reject findings based only on structural dissimilarity between the proposed
   additional agreement and historical documents;
-- when `allowUnresolvedTemplateFields=true`, reject findings based only on a
-  template-only requisite remaining blank because no supplied input contains
-  its value, provided it is recorded in `unresolvedFields` and no value was
-  invented;
+- when `allowUnresolvedFields=true`, reject findings based only on any value
+  remaining empty because no supplied input establishes it, provided the exact
+  `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]` marker is visible at its target, it is
+  recorded in `unresolvedFields`, and no value was invented;
+- if a confirmed finding cannot be corrected with evidence-backed content,
+  accept it, leave the value empty, add the exact human-required marker, record
+  it in `unresolvedFields`, and treat that correction as fixed rather than
+  unresolved; never guess a value;
 - work only inside the current round directory;
 - do not access the network, credentials, parent directories, or unrelated files.
 
