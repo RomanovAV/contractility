@@ -197,6 +197,37 @@ test("runGigacode uses the requested model and strict one-shot flags", async () 
   assert.equal(transcriptSummary.transcriptLimited, false);
 });
 
+test("runGigacode retries a transport API error even when the CLI exits successfully", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-transport-"));
+  const events = [];
+  const result = await runGigacode({
+    config: {
+      command: process.execPath,
+      commandArgs: [fakeGigacode],
+      sessionTimeoutSeconds: 10,
+      idleTimeoutSeconds: 3,
+      retryCount: 1,
+      retryDelaySeconds: 0,
+    },
+    model: "smoke-model",
+    prompt: "Simulate one successful-exit transport failure",
+    cwd: temporary,
+    session: "transport-test",
+    onEvent(event, fields) {
+      events.push({ event, ...fields });
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 2);
+  assert.equal(result.output, '{"status":"ok"}');
+  assert.ok(events.some((event) =>
+    event.event === "finished"
+    && event.errorKind === "reported-api-error"
+    && event.ok === false));
+  assert.ok(events.some((event) => event.event === "retrying"));
+});
+
 test("producer status parser accepts one status object with harmless model formatting", () => {
   assert.deepEqual(
     parseProducerStatus('{"status":"change-plan-ready"}'),

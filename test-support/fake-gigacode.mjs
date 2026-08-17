@@ -43,7 +43,16 @@ function emitText(result) {
   })}\n`);
 }
 
-if (prompt.includes('Return exactly {"status":"ok"}')) {
+if (prompt.includes("Simulate one successful-exit transport failure")) {
+  const marker = path.join(process.cwd(), ".fake-transport-retried");
+  try {
+    await readFile(marker, "utf8");
+    emit({ status: "ok" });
+  } catch {
+    await writeFile(marker, "retried\n");
+    emitText("[API Error: terminated (cause: other side closed)]");
+  }
+} else if (prompt.includes('Return exactly {"status":"ok"}')) {
   emit({ status: "ok" });
 } else if (prompt.includes("reconstruct the current contract from signed OCR evidence")) {
   const task = JSON.parse(

@@ -8,6 +8,7 @@ const APPROVAL_UNAVAILABLE =
   "requires user approval but cannot execute in non-interactive mode";
 const TRANSIENT_PATTERNS = [
   "FYA_TRANSIENT_TIMEOUT",
+  "API Error: terminated (cause: other side closed)",
   "API Error: 529",
   "API Error: 502",
   "API Error: 503",
@@ -18,6 +19,7 @@ const TRANSIENT_PATTERNS = [
   "429 Too Many Requests",
   "Rate limit exceeded",
 ];
+const REPORTED_API_ERROR = /^\[?API Error:\s*/i;
 const ABORT_LISTENER_WARNING = "abort listeners added to [abortsignal]";
 const OPERATION_CANCELLED = "operation cancelled";
 const MAX_CAPTURE_CHARS = 2_000_000;
@@ -324,6 +326,7 @@ async function runOnce({
   const combined = `${decoded.output}\n${stderr}`;
   const approvalUnavailable = combined.includes(APPROVAL_UNAVAILABLE);
   const knownCliCancellation = isKnownCliCancellation(combined);
+  const reportedApiError = REPORTED_API_ERROR.test(decoded.output.trim());
   const transient = knownCliCancellation || TRANSIENT_PATTERNS.some((pattern) =>
     combined.toLowerCase().includes(pattern.toLowerCase()));
   const response = {
@@ -331,13 +334,15 @@ async function runOnce({
       && !timedOut
       && !idleTimedOut
       && !outputLimited
-      && !approvalUnavailable,
+      && !approvalUnavailable
+      && !reportedApiError,
     returnCode: result.code,
     signal: result.signal,
     timedOut,
     idleTimedOut,
     outputLimited,
     approvalUnavailable,
+    reportedApiError,
     knownCliCancellation,
     transient,
     output: decoded.output.trim(),
@@ -360,7 +365,9 @@ async function runOnce({
           ? "output-limit"
           : approvalUnavailable
             ? "approval-unavailable"
-            : result.code === 0 ? null : "nonzero-exit",
+            : reportedApiError
+              ? "reported-api-error"
+              : result.code === 0 ? null : "nonzero-exit",
     knownCliCancellation: response.knownCliCancellation,
     returnCode: response.returnCode,
     durationMs: response.durationMs,
@@ -378,6 +385,7 @@ async function runOnce({
       timedOut: response.timedOut,
       idleTimedOut: response.idleTimedOut,
       outputLimited: response.outputLimited,
+      reportedApiError: response.reportedApiError,
       knownCliCancellation: response.knownCliCancellation,
       transcriptLimited: transcript?.limited ?? false,
       durationMs: response.durationMs,
