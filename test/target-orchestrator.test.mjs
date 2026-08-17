@@ -127,6 +127,17 @@ test("decodeStreamJson returns result, session and reported model", () => {
   assert.equal(decoded.usage.total_tokens, 4);
 });
 
+test("decodeStreamJson accepts an object-valued final result", () => {
+  const decoded = decodeStreamJson([
+    JSON.stringify({ type: "system", session_id: "s1", model: "m1" }),
+    JSON.stringify({
+      type: "result",
+      result: { status: "reconstruction-ready" },
+    }),
+  ].join("\n"));
+  assert.equal(decoded.output, '{"status":"reconstruction-ready"}');
+});
+
 test("model verification fails closed when GigaCode omits or changes the model", () => {
   assert.throws(
     () => assertRequestedModel({ reportedModels: [] }, "requested"),
@@ -442,7 +453,8 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     outputRoot: path.join(temporary, "cases"),
   });
   process.env.FAKE_GIGACODE_MODE =
-    "producer-cancel-slow-review-malformed-plan-review-format-retry-unreadable-base-identity";
+    "producer-cancel-slow-review-malformed-plan-review-format-retry-"
+    + "reconstruct-status-retry-unreadable-base-identity";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -548,6 +560,10 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
         ))),
     );
     assert.ok(agentStatuses.some((status) => status.role === "producer-reconstruct"));
+    assert.ok(agentStatuses.some((status) =>
+      status.session === "producer-reconstruct-status-retry"
+      && status.role === "producer-reconstruct"
+      && status.status === "completed"));
     assert.ok(agentStatuses.some((status) => status.role === "producer-plan-retry"));
     assert.ok(agentStatuses.some((status) =>
       status.role === "producer-apply"

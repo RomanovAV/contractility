@@ -77,7 +77,11 @@ function decodeStreamJson(text) {
       if (content) assistant.push(content);
     }
     if (event.type === "result") {
-      if (typeof event.result === "string") finalResult = event.result;
+      if (typeof event.result === "string") {
+        finalResult = event.result;
+      } else if (event.result && typeof event.result === "object") {
+        finalResult = JSON.stringify(event.result);
+      }
       usage = event.usage ?? usage;
     }
   }

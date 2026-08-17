@@ -1190,8 +1190,15 @@ function reviewerTitle(id) {
 
 function gigacodeSessionLabel(session) {
   if (session === "producer-reconstruct") return "Реконструкция договора";
+  if (session === "producer-reconstruct-status-retry") {
+    return "Исправление статуса реконструкции";
+  }
   if (session === "producer-plan") return "Планирование изменений";
+  if (session === "producer-plan-status-retry") return "Исправление статуса плана";
   if (session === "producer-apply") return "Применение изменений к DOCX";
+  if (session === "producer-apply-status-retry") {
+    return "Исправление статуса применения";
+  }
   if (session?.startsWith("synthesis:")) return "Арбитр";
   if (session?.startsWith("review-format:")) return "Исправление формата reviewer";
   if (session?.startsWith("review:")) {

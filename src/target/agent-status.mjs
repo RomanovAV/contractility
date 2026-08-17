@@ -42,6 +42,16 @@ function sessionIdentity(session) {
       reviewerId: null,
     };
   }
+  const statusRetry = session.match(
+    /^producer-(reconstruct|plan|apply)-status-retry$/,
+  );
+  if (statusRetry) {
+    return {
+      role: `producer-${statusRetry[1]}`,
+      round: 1,
+      reviewerId: null,
+    };
+  }
   return { role: "gigacode", round: null, reviewerId: null };
 }
 

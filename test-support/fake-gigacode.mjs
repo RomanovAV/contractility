@@ -161,6 +161,12 @@ if (prompt.includes('Return exactly {"status":"ok"}')) {
   ) {
     emit({ status: "blocked", reason: "Missing mixed-contract scope policy." });
   } else if (
+    mode.includes("reconstruct-status-retry")
+    && !prompt.includes("Structured-output retry after producer stage")
+    && !prompt.includes("Recovery after unresolved model-fill values")
+  ) {
+    emitText("Реконструкция завершена, артефакты сохранены.");
+  } else if (
     unreadableBaseIdentity
     && !prompt.includes("Recovery after unresolved model-fill values")
   ) {
