@@ -157,6 +157,28 @@ cp config/target.example.json config/target.json
 
 Producer, арбитр и все reviewer-роли могут использовать один и тот же
 идентификатор модели. При желании каждой роли можно назначить отдельную модель.
+Чтобы использовать модель, выбранную в настройках самого GigaCode CLI, укажите
+строку `"default"` во всех нужных полях. В этом режиме Contractility не передаёт
+флаг `--model`, но проверяет, что CLI сообщил фактически выбранную модель:
+
+```json
+{
+  "models": {
+    "producer": "default",
+    "synthesizer": "default",
+    "reviewers": [
+      { "id": "contract-reconstruction", "model": "default", "focus": "reconstruction" },
+      { "id": "legal-delta", "model": "default", "focus": "legal delta" },
+      { "id": "document-fidelity", "model": "default", "focus": "document fidelity" }
+    ]
+  }
+}
+```
+
+Если указан явный идентификатор, но GigaCode API отвечает `404 Model not found`,
+Contractility один раз автоматически повторяет тот же запрос с моделью
+`"default"`. Такой failover отражается в событиях и диагностическом пакете.
+
 Проверить CLI, зависимости и все уникальные модели:
 
 ```bash

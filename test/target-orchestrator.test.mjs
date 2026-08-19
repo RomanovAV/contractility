@@ -19,6 +19,7 @@ import { validateTargetConfig } from "../src/target/config.mjs";
 import {
   assertRequestedModel,
   decodeStreamJson,
+  formatGigacodeFailure,
   runGigacode,
 } from "../src/target/gigacode.mjs";
 import {
@@ -149,6 +150,17 @@ test("model verification fails closed when GigaCode omits or changes the model",
   );
 });
 
+test("GigaCode API errors take precedence over informational stderr", () => {
+  const detail = formatGigacodeFailure({
+    reportedApiError: true,
+    output: "[API Error: 404 Model not found]",
+    stderr: "[gigacode] Authorization complete.",
+  });
+  assert.match(detail, /^\[API Error: 404 Model not found\]/);
+  assert.match(detail, /config\/target\.json/);
+  assert.doesNotMatch(detail, /Authorization complete/);
+});
+
 test("runGigacode uses the requested model and strict one-shot flags", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-exec-"));
@@ -195,6 +207,61 @@ test("runGigacode uses the requested model and strict one-shot flags", async () 
   assert.equal(transcriptSummary.model, "smoke-model");
   assert.equal(transcriptSummary.ok, true);
   assert.equal(transcriptSummary.transcriptLimited, false);
+});
+
+test("runGigacode uses the CLI default model without passing --model", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-default-model-"));
+  const result = await runGigacode({
+    config: {
+      command: process.execPath,
+      commandArgs: [fakeGigacode],
+      sessionTimeoutSeconds: 10,
+      idleTimeoutSeconds: 3,
+      retryCount: 0,
+    },
+    model: "default",
+    prompt: 'Return exactly {"status":"ok"} and no other text. Do not use tools.',
+    cwd: temporary,
+    session: "default-model-test",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.output, '{"status":"ok"}');
+  assert.deepEqual(result.reportedModels, ["fake-default-model"]);
+  assert.doesNotThrow(() => assertRequestedModel(result, "default"));
+});
+
+test("runGigacode falls back to the CLI default when an explicit model is missing", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-model-fallback-"));
+  const events = [];
+  const result = await runGigacode({
+    config: {
+      command: process.execPath,
+      commandArgs: [fakeGigacode],
+      sessionTimeoutSeconds: 10,
+      idleTimeoutSeconds: 3,
+      retryCount: 0,
+    },
+    model: "missing-model",
+    prompt: 'Return exactly {"status":"ok"} and no other text. Do not use tools.',
+    cwd: temporary,
+    session: "model-fallback-test",
+    onEvent(event, fields) {
+      events.push({ event, ...fields });
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 2);
+  assert.equal(result.requestedModel, "missing-model");
+  assert.equal(result.effectiveModel, "default");
+  assert.equal(result.modelFallbackUsed, true);
+  assert.deepEqual(result.reportedModels, ["fake-default-model"]);
+  assert.doesNotThrow(() => assertRequestedModel(result, "missing-model"));
+  assert.ok(events.some((event) =>
+    event.event === "retrying"
+    && event.reason === "model-not-found-fallback"
+    && event.nextModel === "default"));
 });
 
 test("runGigacode retries a transport API error even when the CLI exits successfully", async () => {
@@ -357,6 +424,17 @@ test("target config allows one model for every agent role", () => {
   }));
   config.models.producer = "same-model";
   config.models.synthesizer = "same-model";
+  assert.doesNotThrow(() => validateTargetConfig(config));
+});
+
+test("target config accepts the GigaCode CLI default model sentinel", () => {
+  const config = targetConfig("/tmp/runs");
+  config.models.producer = "default";
+  config.models.synthesizer = "default";
+  config.models.reviewers = config.models.reviewers.map((reviewer) => ({
+    ...reviewer,
+    model: "default",
+  }));
   assert.doesNotThrow(() => validateTargetConfig(config));
 });
 

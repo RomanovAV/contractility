@@ -26,7 +26,11 @@ import {
   sha256File,
   sha256Text,
 } from "./fs-utils.mjs";
-import { assertRequestedModel, runGigacode } from "./gigacode.mjs";
+import {
+  assertRequestedModel,
+  formatGigacodeFailure,
+  runGigacode,
+} from "./gigacode.mjs";
 import {
   findingFingerprint,
   formatRetryPrompt,
@@ -315,7 +319,7 @@ async function runProducerStage({
   if (!result.ok) {
     if (!result.knownCliCancellation) {
       throw new Error(
-        `Producer ${stage} завершился с ошибкой: ${result.stderr || result.output}`,
+        `Producer ${stage} завершился с ошибкой: ${formatGigacodeFailure(result)}`,
       );
     }
     if (result.reportedModels.length > 0) {
@@ -348,7 +352,7 @@ async function runProducerStage({
       if (!statusRetry.ok) {
         throw new Error(
           `Producer ${stage} не исправил некорректный JSON-статус: `
-          + `${statusRetry.stderr || statusRetry.output || error.message}.`,
+          + `${formatGigacodeFailure(statusRetry) || error.message}.`,
         );
       }
       assertRequestedModel(statusRetry, config.models.producer);
@@ -400,7 +404,7 @@ ${escapedReason}
       if (!unresolvedRetry.ok) {
         throw new Error(
           `Producer ${stage} не обработал незаполненные значения: `
-          + `${unresolvedRetry.stderr || unresolvedRetry.output}`,
+          + formatGigacodeFailure(unresolvedRetry),
         );
       }
       assertRequestedModel(unresolvedRetry, config.models.producer);
@@ -461,7 +465,7 @@ Recovery after invalid JSON artifacts:
     if (!retryResult.ok) {
       throw new Error(
         `Producer plan не исправил некорректные JSON-артефакты: `
-        + `${retryResult.stderr || retryResult.output}`,
+        + formatGigacodeFailure(retryResult),
       );
     }
     assertRequestedModel(retryResult, config.models.producer);
@@ -628,7 +632,9 @@ async function runReviewer({
     diagnosticDirectory: diagnosticDirectory(runDirectory),
   });
   if (!result.ok) {
-    throw new Error(`Reviewer ${reviewer.id} завершился с ошибкой: ${result.stderr || result.output}`);
+    throw new Error(
+      `Reviewer ${reviewer.id} завершился с ошибкой: ${formatGigacodeFailure(result)}`,
+    );
   }
   assertRequestedModel(result, reviewer.model);
   let report;
@@ -736,7 +742,7 @@ Untrusted findings: untrusted-findings.json`;
     diagnosticDirectory: diagnosticDirectory(runDirectory),
   });
   if (!result.ok) {
-    throw new Error(`Арбитр завершился с ошибкой: ${result.stderr || result.output}`);
+    throw new Error(`Арбитр завершился с ошибкой: ${formatGigacodeFailure(result)}`);
   }
   assertRequestedModel(result, config.models.synthesizer);
   await verifyEvidenceWorkspace(

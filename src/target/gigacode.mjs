@@ -21,6 +21,8 @@ const TRANSIENT_PATTERNS = [
   "Rate limit exceeded",
 ];
 const REPORTED_API_ERROR = /^\[?API Error:\s*/i;
+const MODEL_NOT_FOUND = /\b404\s+Model not found\b/i;
+const DEFAULT_MODEL = "default";
 const ABORT_LISTENER_WARNING = "abort listeners added to [abortsignal]";
 const OPERATION_CANCELLED = "operation cancelled";
 const MAX_CAPTURE_CHARS = 2_000_000;
@@ -297,6 +299,8 @@ async function writeTranscriptSummary(transcript, value) {
 async function runOnce({
   config,
   model,
+  requestedModel = model,
+  modelFallbackUsed = false,
   prompt,
   cwd,
   session,
@@ -307,8 +311,7 @@ async function runOnce({
 }) {
   const args = [
     ...(config.commandArgs ?? []),
-    "--model",
-    model,
+    ...(model === DEFAULT_MODEL ? [] : ["--model", model]),
     "--approval-mode=auto-edit",
     "--allowed-tools",
     "run_shell_command",
@@ -320,6 +323,8 @@ async function runOnce({
   onEvent("prepared", {
     session,
     model,
+    requestedModel,
+    modelFallbackUsed,
     attempt,
     command: config.command,
     promptChars: prompt.length,
@@ -339,7 +344,14 @@ async function runOnce({
     stdio: ["ignore", "pipe", "pipe"],
   });
   activeChildren.add(child);
-  onEvent("started", { session, model, attempt, pid: child.pid });
+  onEvent("started", {
+    session,
+    model,
+    requestedModel,
+    modelFallbackUsed,
+    attempt,
+    pid: child.pid,
+  });
 
   let stdout = "";
   let stderr = "";
@@ -407,6 +419,8 @@ async function runOnce({
     await writeTranscriptSummary(transcript, {
       session,
       model,
+      requestedModel,
+      modelFallbackUsed,
       attempt,
       startedAt,
       finishedAt,
@@ -418,6 +432,9 @@ async function runOnce({
     await writeExecutionDiagnostic(diagnosticDirectory, session, attempt, {
       session,
       model,
+      requestedModel,
+      effectiveModel: model,
+      modelFallbackUsed,
       attempt,
       startedAt,
       finishedAt,
@@ -478,7 +495,9 @@ async function runOnce({
             : result.code === 0 ? null : "nonzero-exit";
   onEvent("finished", {
     session,
-    model,
+    model: decoded.models.at(-1) ?? model,
+    requestedModel,
+    modelFallbackUsed,
     attempt,
     ok: response.ok,
     errorKind,
@@ -490,6 +509,9 @@ async function runOnce({
   await writeTranscriptSummary(transcript, {
       session,
       model,
+      requestedModel,
+      effectiveModel: model,
+      modelFallbackUsed,
       attempt,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -508,6 +530,9 @@ async function runOnce({
   await writeExecutionDiagnostic(diagnosticDirectory, session, attempt, {
     session,
     model,
+    requestedModel,
+    effectiveModel: model,
+    modelFallbackUsed,
     attempt,
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -541,24 +566,80 @@ async function runOnce({
 
 export async function runGigacode(options) {
   const retries = options.config.retryCount ?? 1;
+  const requestedModel = options.model;
+  let activeModel = requestedModel;
+  let modelFallbackUsed = false;
+  let transientRetries = 0;
+  let attempt = 1;
   let last;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    last = await runOnce({ ...options, attempt: attempt + 1 });
-    last.attempt = attempt + 1;
-    if (last.ok || last.approvalUnavailable || !last.transient || attempt === retries) {
+  while (true) {
+    last = await runOnce({
+      ...options,
+      model: activeModel,
+      requestedModel,
+      modelFallbackUsed,
+      attempt,
+    });
+    Object.assign(last, {
+      attempt,
+      requestedModel,
+      effectiveModel: activeModel,
+      modelFallbackUsed,
+    });
+    if (last.ok || last.approvalUnavailable) {
       return last;
     }
+
+    if (
+      activeModel !== DEFAULT_MODEL
+      && !modelFallbackUsed
+      && last.reportedApiError
+      && MODEL_NOT_FOUND.test(last.output)
+    ) {
+      modelFallbackUsed = true;
+      activeModel = DEFAULT_MODEL;
+      options.onEvent?.("retrying", {
+        session: options.session,
+        model: requestedModel,
+        requestedModel,
+        nextModel: DEFAULT_MODEL,
+        reason: "model-not-found-fallback",
+        attempt,
+        nextAttempt: attempt + 1,
+        retryDelaySeconds: 0,
+      });
+      attempt += 1;
+      continue;
+    }
+
+    if (!last.transient || transientRetries >= retries) return last;
     const retryDelaySeconds = options.config.retryDelaySeconds ?? 5;
     options.onEvent?.("retrying", {
       session: options.session,
-      model: options.model,
-      attempt: attempt + 1,
-      nextAttempt: attempt + 2,
+      model: activeModel,
+      requestedModel,
+      reason: "transient-error",
+      attempt,
+      nextAttempt: attempt + 1,
       retryDelaySeconds,
     });
     await delay(retryDelaySeconds * 1000);
+    transientRetries += 1;
+    attempt += 1;
   }
-  return last;
+}
+
+export function formatGigacodeFailure(result) {
+  const output = String(result?.output ?? "").trim();
+  const stderr = String(result?.stderr ?? "").trim();
+  if (result?.reportedApiError && output) {
+    if (MODEL_NOT_FOUND.test(output)) {
+      return `${output}. Проверьте идентификатор модели в config/target.json `
+        + "и запустите npm run doctor:target -- --config config/target.json --smoke";
+    }
+    return output;
+  }
+  return stderr || output || "GigaCode завершился без диагностического сообщения";
 }
 
 export function assertRequestedModel(result, requestedModel) {
@@ -567,6 +648,12 @@ export function assertRequestedModel(result, requestedModel) {
       `GigaCode не сообщил фактически использованную модель для запроса ${requestedModel}.`,
     );
   }
+  if (
+    result.modelFallbackUsed
+    && result.requestedModel === requestedModel
+    && result.effectiveModel === DEFAULT_MODEL
+  ) return;
+  if (requestedModel === DEFAULT_MODEL) return;
   if (!result.reportedModels.includes(requestedModel)) {
     throw new Error(
       `GigaCode запрошен с моделью ${requestedModel}, но сообщил: ${result.reportedModels.join(", ")}.`,

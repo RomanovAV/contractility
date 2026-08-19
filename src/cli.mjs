@@ -9,6 +9,7 @@ import { loadTargetConfig, requestedModels } from "./target/config.mjs";
 import { readJson } from "./target/fs-utils.mjs";
 import {
   assertRequestedModel,
+  formatGigacodeFailure,
   runGigacode,
   terminateActiveGigacode,
 } from "./target/gigacode.mjs";
@@ -119,11 +120,22 @@ async function doctor(options) {
         session: `doctor:${model}`,
       });
       if (!result.ok || result.output !== '{"status":"ok"}') {
-        checks.push({ name: `Model ${model}`, ok: false, value: result.stderr || result.output });
+        checks.push({
+          name: `Model ${model}`,
+          ok: false,
+          value: formatGigacodeFailure(result),
+        });
       } else {
         try {
           assertRequestedModel(result, model);
-          checks.push({ name: `Model ${model}`, ok: true, value: result.reportedModels.join(", ") || "response ok" });
+          const selected = result.reportedModels.join(", ") || "response ok";
+          checks.push({
+            name: `Model ${model}`,
+            ok: true,
+            value: result.modelFallbackUsed
+              ? `${model} недоступна; CLI default: ${selected}`
+              : selected,
+          });
         } catch (error) {
           checks.push({ name: `Model ${model}`, ok: false, value: error.message });
         }

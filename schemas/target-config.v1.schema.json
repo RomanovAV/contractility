@@ -23,8 +23,8 @@
       "type": "object",
       "required": ["producer", "synthesizer", "reviewers"],
       "properties": {
-        "producer": { "type": "string", "minLength": 1 },
-        "synthesizer": { "type": "string", "minLength": 1 },
+        "producer": { "type": "string", "minLength": 1, "description": "Use 'default' to omit --model and let GigaCode CLI choose." },
+        "synthesizer": { "type": "string", "minLength": 1, "description": "Use 'default' to omit --model and let GigaCode CLI choose." },
         "reviewers": {
           "type": "array",
           "minItems": 3,
@@ -33,7 +33,7 @@
             "required": ["id", "model", "focus"],
             "properties": {
               "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,48}$" },
-              "model": { "type": "string", "minLength": 1 },
+              "model": { "type": "string", "minLength": 1, "description": "Use 'default' to omit --model and let GigaCode CLI choose." },
               "focus": { "type": "string", "minLength": 1 },
               "required": { "type": "boolean" }
             }

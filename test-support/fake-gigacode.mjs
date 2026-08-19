@@ -8,7 +8,7 @@ const valueAfter = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : "";
 };
-const model = valueAfter("--model");
+const model = valueAfter("--model") || "fake-default-model";
 const prompt = valueAfter("-p");
 const mode = process.env.FAKE_GIGACODE_MODE ?? "pass";
 const humanRequiredMarker = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
@@ -43,7 +43,9 @@ function emitText(result) {
   })}\n`);
 }
 
-if (prompt.includes("Simulate one successful-exit transport failure")) {
+if (model === "missing-model") {
+  emitText("[API Error: 404 Model not found]");
+} else if (prompt.includes("Simulate one successful-exit transport failure")) {
   const marker = path.join(process.cwd(), ".fake-transport-retried");
   try {
     await readFile(marker, "utf8");
