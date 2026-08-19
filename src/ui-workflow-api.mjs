@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   mkdir,
   open,
+  readFile,
   readdir,
   rename,
   rm,
@@ -346,6 +347,83 @@ async function sendFile(response, securityHeaders, filePath, contentType, downlo
   }
 }
 
+async function readOptionalJsonFiles(directory, suffix = ".json") {
+  const values = [];
+  let names;
+  try {
+    names = (await readdir(directory)).filter((name) => name.endsWith(suffix)).sort();
+  } catch {
+    return values;
+  }
+  for (const name of names) {
+    try {
+      values.push({ name, value: await readJson(path.join(directory, name)) });
+    } catch (error) {
+      values.push({ name, readError: error.message ?? String(error) });
+    }
+  }
+  return values;
+}
+
+async function readDiagnosticEvents(runDirectory) {
+  let content;
+  try {
+    content = await readFile(path.join(runDirectory, "events.ndjson"), "utf8");
+  } catch {
+    return { events: [], invalidLines: 0 };
+  }
+  const events = [];
+  let invalidLines = 0;
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+      invalidLines += 1;
+    }
+  }
+  return { events, invalidLines };
+}
+
+async function writeRunDiagnosticBundle(runId, runDirectory, config) {
+  const filePath = path.join(runDirectory, "diagnostics", "run-diagnostics.json");
+  const state = await readJson(path.join(runDirectory, "state.json"));
+  const eventLog = await readDiagnosticEvents(runDirectory);
+  const [gigacodeAttempts, agentStatuses, transcriptSummaries] = await Promise.all([
+    readOptionalJsonFiles(path.join(runDirectory, "diagnostics", "gigacode")),
+    readOptionalJsonFiles(path.join(runDirectory, "agent-status")),
+    readOptionalJsonFiles(path.join(runDirectory, "transcripts"), ".summary.json"),
+  ]);
+  await atomicWriteJson(filePath, {
+    schemaVersion: "contractility.run-diagnostics.v1",
+    generatedAt: new Date().toISOString(),
+    privacyNotice:
+      "Может содержать финальные ответы модели и служебные сообщения; передавайте файл только доверенному получателю.",
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    runId,
+    state,
+    configuration: {
+      producerModel: config.models.producer,
+      synthesizerModel: config.models.synthesizer,
+      reviewerModels: config.models.reviewers.map(({ id, model }) => ({ id, model })),
+      sessionTimeoutSeconds: config.gigacode.sessionTimeoutSeconds,
+      idleTimeoutSeconds: config.gigacode.idleTimeoutSeconds,
+      retryCount: config.gigacode.retryCount,
+      retryDelaySeconds: config.gigacode.retryDelaySeconds,
+      retainAgentTranscripts: config.storage.retainAgentTranscripts,
+    },
+    eventLog,
+    gigacodeAttempts,
+    agentStatuses,
+    transcriptSummaries,
+  });
+  return filePath;
+}
+
 export function createUiWorkflowApi({
   securityHeaders,
   dataRoot = path.join(projectRoot, "data"),
@@ -592,7 +670,7 @@ export function createUiWorkflowApi({
   }
 
   async function resolveDownload(runId, kind) {
-    const { runDirectory } = await requireRunDirectory(runId);
+    const { config, runDirectory } = await requireRunDirectory(runId);
     const state = await readJson(path.join(runDirectory, "state.json"));
     if (kind === "candidate") {
       if (!state.candidatePath) throw new HttpError(409, "Кандидат ещё не готов.");
@@ -612,6 +690,13 @@ export function createUiWorkflowApi({
         contentType:
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         downloadName: "final-additional-agreement.docx",
+      };
+    }
+    if (kind === "diagnostics") {
+      return {
+        filePath: await writeRunDiagnosticBundle(runId, runDirectory, config),
+        contentType: "application/json; charset=utf-8",
+        downloadName: `${runId}-diagnostics.json`,
       };
     }
     throw new HttpError(404, "Неизвестный файл результата.");

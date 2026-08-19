@@ -201,6 +201,7 @@ test("runGigacode retries a transport API error even when the CLI exits successf
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-transport-"));
   const events = [];
+  const diagnosticDirectory = path.join(temporary, "diagnostics");
   const result = await runGigacode({
     config: {
       command: process.execPath,
@@ -214,6 +215,7 @@ test("runGigacode retries a transport API error even when the CLI exits successf
     prompt: "Simulate one successful-exit transport failure",
     cwd: temporary,
     session: "transport-test",
+    diagnosticDirectory,
     onEvent(event, fields) {
       events.push({ event, ...fields });
     },
@@ -226,6 +228,17 @@ test("runGigacode retries a transport API error even when the CLI exits successf
     && event.errorKind === "reported-api-error"
     && event.ok === false));
   assert.ok(events.some((event) => event.event === "retrying"));
+  const firstDiagnostic = JSON.parse(await readFile(
+    path.join(diagnosticDirectory, "transport-test.attempt-1.diagnostic.json"),
+    "utf8",
+  ));
+  assert.equal(firstDiagnostic.schemaVersion, "contractility.gigacode-diagnostic.v1");
+  assert.equal(firstDiagnostic.ok, false);
+  assert.equal(firstDiagnostic.errorKind, "reported-api-error");
+  assert.equal(firstDiagnostic.returnCode, 0);
+  assert.match(firstDiagnostic.outputPreview, /other side closed/);
+  assert.equal(firstDiagnostic.protocol.resultEvents[0].subtype, null);
+  assert.equal(firstDiagnostic.protocol.resultEvents[0].resultType, "string");
 });
 
 test("producer status parser accepts one status object with harmless model formatting", () => {

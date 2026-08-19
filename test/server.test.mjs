@@ -56,6 +56,7 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="formation-run-card"/);
   assert.match(indexHtml, /Пять рецензентов/);
   assert.match(indexHtml, /id="approve-candidate"/);
+  assert.match(indexHtml, /id="download-diagnostics"/);
   assert.match(indexHtml, /id="download-final"/);
   assert.doesNotMatch(indexHtml, /download-preview|превью PDF/i);
   assert.match(indexHtml, />\+ Добавить документы</);
@@ -134,6 +135,7 @@ test("workflow API protects mutations and prepares a verified local case", async
     const runDirectory = path.join(config.storage.runRoot, runId);
     const roundDirectory = path.join(runDirectory, "rounds", "01");
     await mkdir(path.join(roundDirectory, "reviews"), { recursive: true });
+    await mkdir(path.join(runDirectory, "diagnostics", "gigacode"), { recursive: true });
     const candidate = Buffer.from("candidate docx");
     const candidateSha256 = sha256(candidate);
     await writeFile(path.join(roundDirectory, "candidate.docx"), candidate);
@@ -184,6 +186,21 @@ test("workflow API protects mutations and prepares a verified local case", async
       }),
       "",
     ].join("\n"));
+    await writeFile(
+      path.join(
+        runDirectory,
+        "diagnostics",
+        "gigacode",
+        "producer-reconstruct.attempt-1.diagnostic.json",
+      ),
+      `${JSON.stringify({
+        schemaVersion: "contractility.gigacode-diagnostic.v1",
+        session: "producer-reconstruct",
+        attempt: 1,
+        ok: true,
+        protocol: { eventTypes: { result: 1 } },
+      })}\n`,
+    );
     await onRunCreated({ runId, runDirectory });
     return { runId, runDirectory, state };
   };
@@ -406,6 +423,38 @@ test("workflow API protects mutations and prepares a verified local case", async
   const reusedTicketResponse = await fetch(`${origin}${ticket.downloadUrl}`);
   assert.equal(reusedTicketResponse.status, 404);
   await reusedTicketResponse.arrayBuffer();
+
+  const diagnosticTicketResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/download-ticket`,
+    {
+      method: "POST",
+      headers: {
+        ...securedHeaders,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ kind: "diagnostics" }),
+    },
+  );
+  assert.equal(diagnosticTicketResponse.status, 201);
+  const diagnosticTicket = await diagnosticTicketResponse.json();
+  const diagnosticDownloadResponse = await fetch(
+    `${origin}${diagnosticTicket.downloadUrl}`,
+  );
+  assert.equal(diagnosticDownloadResponse.status, 200);
+  assert.match(
+    diagnosticDownloadResponse.headers.get("content-disposition"),
+    /run-ui-integration-diagnostics\.json/,
+  );
+  const diagnosticBundle = await diagnosticDownloadResponse.json();
+  assert.equal(diagnosticBundle.schemaVersion, "contractility.run-diagnostics.v1");
+  assert.equal(diagnosticBundle.runId, job.runId);
+  assert.equal(diagnosticBundle.state.status, "awaiting-human-approval");
+  assert.equal(diagnosticBundle.configuration.retryCount, 1);
+  assert.equal(diagnosticBundle.gigacodeAttempts.length, 1);
+  assert.equal(
+    diagnosticBundle.gigacodeAttempts[0].value.session,
+    "producer-reconstruct",
+  );
 
   const removedPreviewResponse = await fetch(
     `${origin}/api/workflow/runs/${job.runId}/files/preview`,

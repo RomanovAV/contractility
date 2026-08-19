@@ -33,7 +33,7 @@ const elements = Object.fromEntries(
   [
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
-    "documents-list", "download-candidate", "download-final", "download-json",
+    "documents-list", "download-candidate", "download-diagnostics", "download-final", "download-json",
     "download-text", "draft-drop-zone",
     "draft-file-input", "draft-summary",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
@@ -1372,6 +1372,7 @@ function renderFormationRun(job) {
   const approved = status === "approved";
   const finalized = status === "finalized";
   const candidateReady = awaitingApproval || approved || finalized;
+  elements["download-diagnostics"].disabled = !state.formationRunId;
   elements["download-candidate"].disabled = !candidateReady;
   elements["approver-name"].disabled = !awaitingApproval;
   elements["approve-candidate"].disabled = !awaitingApproval
@@ -1447,6 +1448,9 @@ async function launchFormation() {
   let stageId = null;
   state.formationBusy = true;
   state.formationJobId = "preparing";
+  state.formationRunId = null;
+  state.formationRun = null;
+  elements["download-diagnostics"].disabled = true;
   setError("");
   setRunBlocker("");
   renderRunStages(null);
@@ -1703,6 +1707,9 @@ elements["finalize-run"].addEventListener("click", () => {
 });
 elements["download-candidate"].addEventListener("click", () => {
   downloadRunFile("candidate").catch(console.error);
+});
+elements["download-diagnostics"].addEventListener("click", () => {
+  downloadRunFile("diagnostics").catch(console.error);
 });
 elements["download-final"].addEventListener("click", () => {
   downloadRunFile("final").catch(console.error);

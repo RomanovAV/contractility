@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,6 +25,7 @@ const ABORT_LISTENER_WARNING = "abort listeners added to [abortsignal]";
 const OPERATION_CANCELLED = "operation cancelled";
 const MAX_CAPTURE_CHARS = 2_000_000;
 const MAX_TRANSCRIPT_BYTES = 2_000_000;
+const DIAGNOSTIC_PREVIEW_CHARS = 4_000;
 const activeChildren = new Set();
 
 function allowedEnvironment(extraNames = []) {
@@ -138,6 +140,98 @@ function safeTranscriptName(value) {
   return normalized || "gigacode";
 }
 
+function sha256(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
+}
+
+function diagnosticPreview(value) {
+  const text = String(value ?? "");
+  if (text.length <= DIAGNOSTIC_PREVIEW_CHARS) return text;
+  const side = Math.floor(DIAGNOSTIC_PREVIEW_CHARS / 2);
+  return `${text.slice(0, side)}\n...[${text.length - side * 2} chars omitted]...\n`
+    + text.slice(-side);
+}
+
+function incrementCounter(counters, key) {
+  const normalized = String(key || "unknown").slice(0, 160);
+  counters[normalized] = (counters[normalized] ?? 0) + 1;
+}
+
+export function summarizeStreamProtocol(text) {
+  const summary = {
+    nonEmptyLines: 0,
+    jsonLines: 0,
+    invalidJsonLines: 0,
+    eventTypes: {},
+    eventSubtypes: {},
+    assistantContentTypes: {},
+    toolNames: {},
+    resultEvents: [],
+    lastEvent: null,
+  };
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    summary.nonEmptyLines += 1;
+    let event;
+    try {
+      event = JSON.parse(line);
+      summary.jsonLines += 1;
+    } catch {
+      summary.invalidJsonLines += 1;
+      continue;
+    }
+    incrementCounter(summary.eventTypes, event.type);
+    if (event.subtype) incrementCounter(summary.eventSubtypes, `${event.type}:${event.subtype}`);
+    summary.lastEvent = {
+      type: event.type ?? null,
+      subtype: event.subtype ?? null,
+    };
+    if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+      for (const item of event.message.content) {
+        incrementCounter(summary.assistantContentTypes, item?.type);
+        if (item?.type === "tool_use" && item.name) {
+          incrementCounter(summary.toolNames, item.name);
+        }
+      }
+    }
+    if (event.type === "result") {
+      summary.resultEvents.push({
+        subtype: event.subtype ?? null,
+        isError: event.is_error ?? null,
+        resultType: event.result === null ? "null" : typeof event.result,
+        resultPreview: diagnosticPreview(
+          typeof event.result === "string" ? event.result : JSON.stringify(event.result ?? null),
+        ),
+      });
+      if (summary.resultEvents.length > 5) summary.resultEvents.shift();
+    }
+  }
+  return summary;
+}
+
+async function writeExecutionDiagnostic(directory, session, attempt, value) {
+  if (!directory) return;
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700).catch(() => {});
+    const filePath = path.join(
+      directory,
+      `${safeTranscriptName(session)}.attempt-${attempt}.diagnostic.json`,
+    );
+    await writeFile(filePath, `${JSON.stringify({
+      schemaVersion: "contractility.gigacode-diagnostic.v1",
+      ...value,
+    }, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch {
+    // Diagnostics must never change the workflow result.
+  }
+}
+
 async function createTranscriptWriters(directory, session, attempt) {
   if (!directory) return null;
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -208,6 +302,7 @@ async function runOnce({
   session,
   onEvent = () => {},
   transcriptDirectory = null,
+  diagnosticDirectory = null,
   attempt = 1,
 }) {
   const args = [
@@ -308,16 +403,34 @@ async function runOnce({
     }
   }
   if (executionError) {
+    const finishedAt = new Date().toISOString();
     await writeTranscriptSummary(transcript, {
       session,
       model,
       attempt,
       startedAt,
-      finishedAt: new Date().toISOString(),
+      finishedAt,
       ok: false,
       error: executionError.message ?? String(executionError),
       transcriptLimited: transcript?.limited ?? false,
       durationMs: Date.now() - started,
+    });
+    await writeExecutionDiagnostic(diagnosticDirectory, session, attempt, {
+      session,
+      model,
+      attempt,
+      startedAt,
+      finishedAt,
+      ok: false,
+      errorKind: "spawn-error",
+      executionError: executionError.message ?? String(executionError),
+      stdoutChars: stdout.length,
+      stderrChars: stderr.length,
+      stdoutSha256: sha256(stdout),
+      stderrSha256: sha256(stderr),
+      outputPreview: diagnosticPreview(decodeStreamJson(stdout).output),
+      stderrPreview: diagnosticPreview(stderr),
+      protocol: summarizeStreamProtocol(stdout),
     });
     throw executionError;
   }
@@ -352,22 +465,23 @@ async function runOnce({
     usage: decoded.usage,
     durationMs: Date.now() - started,
   };
+  const errorKind = timedOut
+    ? "session-timeout"
+    : idleTimedOut
+      ? "idle-timeout"
+      : outputLimited
+        ? "output-limit"
+        : approvalUnavailable
+          ? "approval-unavailable"
+          : reportedApiError
+            ? "reported-api-error"
+            : result.code === 0 ? null : "nonzero-exit";
   onEvent("finished", {
     session,
     model,
     attempt,
     ok: response.ok,
-    errorKind: timedOut
-      ? "session-timeout"
-      : idleTimedOut
-        ? "idle-timeout"
-        : outputLimited
-          ? "output-limit"
-          : approvalUnavailable
-            ? "approval-unavailable"
-            : reportedApiError
-              ? "reported-api-error"
-              : result.code === 0 ? null : "nonzero-exit",
+    errorKind,
     knownCliCancellation: response.knownCliCancellation,
     returnCode: response.returnCode,
     durationMs: response.durationMs,
@@ -391,6 +505,37 @@ async function runOnce({
       durationMs: response.durationMs,
       outputChars: response.output.length,
     });
+  await writeExecutionDiagnostic(diagnosticDirectory, session, attempt, {
+    session,
+    model,
+    attempt,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    ok: response.ok,
+    errorKind,
+    returnCode: response.returnCode,
+    signal: response.signal,
+    timedOut: response.timedOut,
+    idleTimedOut: response.idleTimedOut,
+    outputLimited: response.outputLimited,
+    approvalUnavailable: response.approvalUnavailable,
+    reportedApiError: response.reportedApiError,
+    knownCliCancellation: response.knownCliCancellation,
+    transient: response.transient,
+    durationMs: response.durationMs,
+    stdoutChars: stdout.length,
+    stderrChars: stderr.length,
+    stdoutSha256: sha256(stdout),
+    stderrSha256: sha256(stderr),
+    outputChars: response.output.length,
+    outputPreview: diagnosticPreview(response.output),
+    stderrPreview: diagnosticPreview(response.stderr),
+    reportedModels: response.reportedModels,
+    sessionId: response.sessionId,
+    usage: response.usage,
+    protocol: summarizeStreamProtocol(stdout),
+    rawTranscriptsRetained: Boolean(transcriptDirectory),
+  });
   return response;
 }
 

@@ -103,6 +103,10 @@ function transcriptDirectory(config, runDirectory) {
     : null;
 }
 
+function diagnosticDirectory(runDirectory) {
+  return path.join(runDirectory, "diagnostics", "gigacode");
+}
+
 function formationPolicy() {
   return {
     amendmentOrder: "strict-input-order",
@@ -305,6 +309,7 @@ async function runProducerStage({
     session: `producer-${stage}`,
     onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
+    diagnosticDirectory: diagnosticDirectory(runDirectory),
   });
   let recovered = false;
   if (!result.ok) {
@@ -338,6 +343,7 @@ async function runProducerStage({
         session: `producer-${stage}-status-retry`,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
+        diagnosticDirectory: diagnosticDirectory(runDirectory),
       });
       if (!statusRetry.ok) {
         throw new Error(
@@ -389,6 +395,7 @@ ${escapedReason}
         session: `producer-${stage}-unresolved-retry`,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
+        diagnosticDirectory: diagnosticDirectory(runDirectory),
       });
       if (!unresolvedRetry.ok) {
         throw new Error(
@@ -449,6 +456,7 @@ Recovery after invalid JSON artifacts:
       session: "producer-plan-artifact-retry",
       onEvent: onGigacodeEvent,
       transcriptDirectory: transcriptDirectory(config, runDirectory),
+      diagnosticDirectory: diagnosticDirectory(runDirectory),
     });
     if (!retryResult.ok) {
       throw new Error(
@@ -617,6 +625,7 @@ async function runReviewer({
     session: `review:${round}:${reviewer.id}`,
     onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
+    diagnosticDirectory: diagnosticDirectory(runDirectory),
   });
   if (!result.ok) {
     throw new Error(`Reviewer ${reviewer.id} завершился с ошибкой: ${result.stderr || result.output}`);
@@ -640,6 +649,7 @@ async function runReviewer({
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
+        diagnosticDirectory: diagnosticDirectory(runDirectory),
       });
       if (!result.ok) break;
       assertRequestedModel(result, reviewer.model);
@@ -723,6 +733,7 @@ Untrusted findings: untrusted-findings.json`;
     session: `synthesis:${round}`,
     onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
+    diagnosticDirectory: diagnosticDirectory(runDirectory),
   });
   if (!result.ok) {
     throw new Error(`Арбитр завершился с ошибкой: ${result.stderr || result.output}`);
