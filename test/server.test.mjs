@@ -50,6 +50,8 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="file-input"[^>]*multiple/);
   assert.match(indexHtml, /id="additional-file-input"[^>]*multiple/);
   assert.match(indexHtml, /id="draft-file-input"[^>]*\.docx/);
+  assert.match(indexHtml, /id="load-workspace-button"/);
+  assert.match(indexHtml, /id="workspace-file-input"[^>]*\.contractility\.json/);
   assert.match(indexHtml, /Предлагаемое допсоглашение/);
   assert.match(indexHtml, /Финальное соглашение/);
   assert.match(indexHtml, /id="start-formation"/);
@@ -58,6 +60,7 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="approve-candidate"/);
   assert.match(indexHtml, /id="download-diagnostics"/);
   assert.match(indexHtml, /id="download-final"/);
+  assert.match(indexHtml, /id="save-workspace"/);
   assert.doesNotMatch(indexHtml, /download-preview|превью PDF/i);
   assert.match(indexHtml, />\+ Добавить документы</);
   assert.match(indexHtml, />Сбросить</);
@@ -70,6 +73,11 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.equal(diagnosticsScriptResponse.status, 200);
   assert.match(diagnosticsScriptResponse.headers.get("content-type"), /text\/javascript/);
   await diagnosticsScriptResponse.arrayBuffer();
+
+  const workspaceSnapshotResponse = await fetch(`${origin}/workspace-snapshot.mjs`);
+  assert.equal(workspaceSnapshotResponse.status, 200);
+  assert.match(workspaceSnapshotResponse.headers.get("content-type"), /text\/javascript/);
+  await workspaceSnapshotResponse.arrayBuffer();
 
   const workerResponse = await fetch(`${origin}/vendor/tesseract/worker.min.js`);
   assert.equal(workerResponse.status, 200);

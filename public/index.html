@@ -43,9 +43,11 @@
         <div class="section-heading">
           <div><span class="step-number">01</span><div><h2 id="source-title">Подписанные документы в PDF</h2><p>Первым выберите договор, затем все допсоглашения в хронологическом порядке.</p></div></div>
           <div class="source-actions">
+            <button id="load-workspace-button" class="text-button" type="button">Загрузить сохранённую сессию</button>
             <button id="add-files-button" class="text-button" type="button" hidden>+ Добавить документы</button>
             <button id="reset-button" class="text-button danger-text-button" type="button" hidden>Сбросить</button>
             <input id="additional-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+            <input id="workspace-file-input" type="file" accept="application/json,.json,.contractility.json" hidden>
           </div>
         </div>
 
@@ -159,6 +161,7 @@
         </div>
         <div class="export-actions">
           <button id="start-formation" class="primary-button" type="button" disabled>Запустить формирование</button>
+          <button id="save-workspace" class="secondary-button" type="button" disabled>Сохранить сессию</button>
           <button id="download-json" class="secondary-button" type="button" disabled>Скачать пакет JSON</button>
           <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
         </div>

@@ -581,6 +581,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
     });
+    config.models.producer = "missing-model";
     let createdRun;
     const pendingRun = createAndRun({
       caseDirectory: prepared.caseDirectory,
@@ -669,6 +670,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     );
     const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
     assert.match(events, /"event":"gigacode\.recovered"/);
+    assert.match(events, /"reason":"model-not-found-fallback"/);
     assert.doesNotMatch(events, /"event":"gigacode\.activity"/);
     for (const line of events.trim().split("\n")) {
       assert.doesNotThrow(() => JSON.parse(line));
@@ -701,7 +703,12 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
       status.role === "reviewer-format"
       && status.reviewerId === "legal-b"
       && status.status === "completed"));
-    assert.ok(agentStatuses.every((status) => status.attempt === 1));
+    assert.ok(agentStatuses
+      .filter((status) => status.role.startsWith("producer-"))
+      .every((status) => status.attempt === 2));
+    assert.ok(agentStatuses
+      .filter((status) => status.role.startsWith("reviewer"))
+      .every((status) => status.attempt === 1));
     await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
     await assert.rejects(() => approveRun({
       runDirectory: run.runDirectory,

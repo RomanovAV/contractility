@@ -21,6 +21,10 @@ import {
   normalizeReviewerReports,
   validateDraftAgreementFile,
 } from "./workflow-utils.mjs";
+import {
+  createWorkspaceSnapshot,
+  parseWorkspaceSnapshot,
+} from "./workspace-snapshot.mjs";
 
 const { createWorker } = Tesseract;
 
@@ -40,14 +44,14 @@ const elements = Object.fromEntries(
     "file-summary", "finalize-run", "force-ocr", "formation-run-card",
     "gigacode-activity", "gigacode-activity-detail", "gigacode-activity-time",
     "gigacode-activity-title", "next-page", "ocr-overlay", "overlay-toggle",
-    "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
+    "load-workspace-button", "page-rotation-label", "page-surface", "page-text", "pages-counter", "pages-list",
     "preflight-note", "previous-page", "progress-bar", "progress-card", "progress-detail",
     "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
     "review-round-label", "reviewers-grid", "rotate-page-left", "rotate-page-right",
     "rotation-select", "run-blocker", "run-detail", "run-id-label", "run-stages",
-    "run-status-badge", "start-button", "start-formation", "target-status-note",
+    "run-status-badge", "save-workspace", "start-button", "start-formation", "target-status-note",
     "viewer-canvas", "viewer-document-label", "viewer-page-label", "viewer-position",
-    "viewer-stage", "workspace", "formation-status",
+    "viewer-stage", "workspace", "workspace-file-input", "formation-status",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -151,6 +155,7 @@ function updateFormationState() {
   elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement;
   elements["download-json"].disabled = !isFormationReady();
   elements["download-text"].disabled = !isFormationReady();
+  elements["save-workspace"].disabled = !isOcrComplete() || inputsLocked();
   const targetReady = Boolean(state.targetSession?.target?.ready);
   const launchAvailability = formationLaunchAvailability({
     ocrComplete: isOcrComplete(),
@@ -233,7 +238,10 @@ function setRunning(running) {
   elements["add-files-button"].disabled = locked;
   elements["additional-file-input"].disabled = locked;
   elements["file-input"].disabled = locked;
+  elements["load-workspace-button"].disabled = locked;
+  elements["workspace-file-input"].disabled = locked;
   elements["draft-file-input"].disabled = locked;
+  elements["save-workspace"].disabled = locked || !isOcrComplete();
   elements["dpi-select"].disabled = locked;
   elements["force-ocr"].disabled = locked;
   elements["rotation-select"].disabled = locked;
@@ -544,6 +552,7 @@ function resetDocuments() {
   elements["file-input"].value = "";
   elements["additional-file-input"].value = "";
   elements["draft-file-input"].value = "";
+  elements["workspace-file-input"].value = "";
   elements["file-summary"].replaceChildren();
   elements["file-summary"].hidden = true;
   elements["drop-zone"].hidden = false;
@@ -1075,6 +1084,199 @@ function buildDocumentResult() {
     settings,
     complete: isOcrComplete(),
   };
+}
+
+function importedFile(metadata, bytes) {
+  return new File([bytes], metadata.name, {
+    type: metadata.type,
+    lastModified: metadata.lastModified,
+  });
+}
+
+async function openImportedPdf(bytes) {
+  const loadingTask = getDocument({
+    data: bytes,
+    isEvalSupported: false,
+    useSystemFonts: true,
+    wasmUrl: new URL("./vendor/pdfjs/wasm/", import.meta.url).href,
+  });
+  return loadingTask.promise;
+}
+
+function restoreImportedSettings(settings = {}) {
+  if ([160, 220, 300].includes(Number(settings.dpi))) {
+    elements["dpi-select"].value = String(settings.dpi);
+  }
+  elements["force-ocr"].checked = settings.forceOcr === true;
+  if (["auto", "0", "90", "180", "270"].includes(String(settings.rotationMode))) {
+    elements["rotation-select"].value = String(settings.rotationMode);
+  }
+}
+
+async function saveWorkspaceSnapshot() {
+  if (!isOcrComplete() || inputsLocked()) return;
+  const previousLabel = elements["save-workspace"].textContent;
+  state.loading = true;
+  setRunning(false);
+  elements["save-workspace"].textContent = "Сохраняется…";
+  setError("");
+  try {
+    const snapshot = await createWorkspaceSnapshot({
+      ocrResult: buildDocumentResult(),
+      documents: state.documents,
+      draftAgreement: state.draftAgreement,
+    });
+    download(
+      `${baseFileName()}.contractility.json`,
+      "application/json",
+      `${JSON.stringify(snapshot, null, 2)}\n`,
+    );
+  } catch (error) {
+    setError(`Не удалось сохранить сессию: ${error.message ?? error}`);
+  } finally {
+    state.loading = false;
+    elements["save-workspace"].textContent = previousLabel;
+    setRunning(false);
+    updateFormationState();
+  }
+}
+
+async function loadWorkspaceSnapshot(fileList) {
+  if (inputsLocked()) return;
+  const files = Array.from(fileList ?? []);
+  if (files.length !== 1) {
+    setError("Выберите один JSON-файл сохранённой сессии Contractility.");
+    return;
+  }
+  const candidateDocuments = [];
+  const previousWorkspace = {
+    documents: state.documents,
+    draftAgreement: state.draftAgreement,
+    selectedDocument: state.selectedDocument,
+    selectedPage: state.selectedPage,
+    startedAt: state.startedAt,
+    settings: readSettings(),
+  };
+  state.loading = true;
+  setRunning(false);
+  setError("");
+  updateProgress({
+    percent: 5,
+    title: "Загрузка сохранённой сессии",
+    detail: "Проверяется структура JSON",
+  });
+  try {
+    const snapshot = parseWorkspaceSnapshot(JSON.parse(await files[0].text()));
+    for (const [index, embedded] of snapshot.signedDocuments.entries()) {
+      const ocrDocument = snapshot.ocrResult.documents[index];
+      if (!embedded.file.name.toLowerCase().endsWith(".pdf")) {
+        throw new TypeError(`Вложенный файл «${embedded.file.name}» не является PDF.`);
+      }
+      updateProgress({
+        percent: 10 + (index / snapshot.signedDocuments.length) * 70,
+        title: "Загрузка сохранённой сессии",
+        detail: `Проверяется PDF ${index + 1} из ${snapshot.signedDocuments.length}`,
+      });
+      const actualHash = await sha256(embedded.bytes.buffer);
+      if (actualHash !== embedded.file.sha256) {
+        throw new TypeError(`SHA-256 файла «${embedded.file.name}» не совпадает.`);
+      }
+      const file = importedFile(embedded.file, embedded.bytes);
+      const pdf = await openImportedPdf(embedded.bytes);
+      if (pdf.numPages !== ocrDocument.pageCount) {
+        await pdf.destroy().catch(() => {});
+        throw new TypeError(`Число страниц «${embedded.file.name}» не совпадает со снимком.`);
+      }
+      const results = new Array(ocrDocument.pageCount);
+      for (const page of ocrDocument.pages) results[page.number - 1] = page;
+      candidateDocuments.push({
+        id: ocrDocument.id,
+        role: ocrDocument.role,
+        label: ocrDocument.label,
+        file,
+        fileHash: actualHash,
+        pdf,
+        results,
+        pageRotationOverrides: { ...(ocrDocument.pageRotationOverrides ?? {}) },
+        error: null,
+      });
+    }
+
+    let draftAgreement = null;
+    if (snapshot.draftAgreement) {
+      const embedded = snapshot.draftAgreement;
+      if (!embedded.file.name.toLowerCase().endsWith(".docx")) {
+        throw new TypeError(`Вложенный файл «${embedded.file.name}» не является DOCX.`);
+      }
+      const actualHash = await sha256(embedded.bytes.buffer);
+      if (actualHash !== embedded.file.sha256) {
+        throw new TypeError(`SHA-256 файла «${embedded.file.name}» не совпадает.`);
+      }
+      draftAgreement = {
+        file: importedFile(embedded.file, embedded.bytes),
+        sha256: actualHash,
+      };
+    }
+
+    state.documents = candidateDocuments;
+    state.draftAgreement = draftAgreement;
+    state.selectedDocument = 0;
+    state.selectedPage = 1;
+    state.startedAt = snapshot.ocrResult.startedAt ?? null;
+    restoreImportedSettings(snapshot.ocrResult.settings);
+
+    elements["drop-zone"].hidden = true;
+    elements["file-summary"].hidden = false;
+    elements["add-files-button"].hidden = false;
+    elements["reset-button"].hidden = false;
+    elements["workspace"].hidden = false;
+    renderFileSummary();
+    renderDraftAgreement();
+    renderDocumentsList();
+    await selectDocument(0, 1);
+    destroyDocuments(previousWorkspace.documents);
+    clearTimeout(state.formationPollTimer);
+    state.formationPollTimer = null;
+    state.formationBusy = false;
+    state.formationJobId = null;
+    state.formationRunId = null;
+    state.formationRun = null;
+    elements["formation-run-card"].hidden = true;
+    updateProgress({
+      percent: 100,
+      title: "Сессия восстановлена",
+      detail: `Загружено ${candidateDocuments.length} PDF, повторный OCR не требуется`,
+    });
+    if (isFormationReady() && !state.targetSession?.target?.ready) {
+      await initializeTargetSession();
+    }
+  } catch (error) {
+    destroyDocuments(candidateDocuments);
+    if (state.documents === candidateDocuments) {
+      state.documents = previousWorkspace.documents;
+      state.draftAgreement = previousWorkspace.draftAgreement;
+      state.selectedDocument = previousWorkspace.selectedDocument;
+      state.selectedPage = previousWorkspace.selectedPage;
+      state.startedAt = previousWorkspace.startedAt;
+      restoreImportedSettings(previousWorkspace.settings);
+      elements["drop-zone"].hidden = state.documents.length > 0;
+      elements["file-summary"].hidden = state.documents.length === 0;
+      elements["add-files-button"].hidden = state.documents.length === 0;
+      elements["reset-button"].hidden = state.documents.length === 0;
+      elements["workspace"].hidden = state.documents.length === 0;
+      renderFileSummary();
+      renderDraftAgreement();
+      renderDocumentsList();
+      if (currentDocument()?.pdf) {
+        await selectDocument(state.selectedDocument, state.selectedPage).catch(console.error);
+      }
+    }
+    setError(`Не удалось загрузить сохранённую сессию: ${error.message ?? error}`);
+  } finally {
+    state.loading = false;
+    setRunning(false);
+    updateFormationState();
+  }
 }
 
 function buildCurrentFormationRequest() {
@@ -1618,6 +1820,16 @@ function baseFileName() {
 }
 
 elements["file-input"].addEventListener("change", (event) => loadDocuments(event.target.files));
+elements["load-workspace-button"].addEventListener("click", () => {
+  elements["workspace-file-input"].value = "";
+  elements["workspace-file-input"].click();
+});
+elements["workspace-file-input"].addEventListener("change", (event) => {
+  loadWorkspaceSnapshot(event.target.files).catch((error) => {
+    console.error(error);
+    setError(`Не удалось загрузить сохранённую сессию: ${error.message ?? error}`);
+  });
+});
 elements["add-files-button"].addEventListener("click", () => {
   elements["additional-file-input"].value = "";
   elements["additional-file-input"].click();
@@ -1663,6 +1875,12 @@ elements["page-text"].addEventListener("input", () => {
   result.manuallyEdited = true;
   elements["edit-note"].hidden = false;
   renderPageList();
+});
+elements["save-workspace"].addEventListener("click", () => {
+  saveWorkspaceSnapshot().catch((error) => {
+    console.error(error);
+    setError(`Не удалось сохранить сессию: ${error.message ?? error}`);
+  });
 });
 elements["download-json"].addEventListener("click", () => {
   try {
