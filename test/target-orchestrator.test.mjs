@@ -823,7 +823,8 @@ test("mixed agreement bundle excludes other contracts and applies full clause re
     sources: sourcePaths,
     outputRoot: path.join(temporary, "cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "mixed-contract-bundle";
+  process.env.FAKE_GIGACODE_MODE =
+    "mixed-contract-bundle-invalid-reconstruction-scope";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -851,6 +852,18 @@ test("mixed agreement bundle excludes other contracts and applies full clause re
     assert.ok(scope.instruments
       .filter((instrument) => instrument.decision === "excluded")
       .every((instrument) => /другой базовый договор/i.test(instrument.reason)));
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.ok(agentStatuses.some((status) =>
+      status.session === "producer-reconstruct-artifact-retry"
+      && status.role === "producer-reconstruct-retry"
+      && status.status === "completed"));
     const currentContract = await readFile(
       path.join(run.runDirectory, "rounds/01/artifacts/current-contract.md"),
       "utf8",

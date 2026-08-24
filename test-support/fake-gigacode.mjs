@@ -70,6 +70,8 @@ if (model === "missing-model") {
   );
   const mixedBundle = mode.includes("mixed-contract-bundle");
   const unreadableBaseIdentity = mode.includes("unreadable-base-identity");
+  const invalidReconstructionScope = mode.includes("invalid-reconstruction-scope")
+    && !prompt.includes("Recovery after invalid reconstruct artifacts");
   const scope = {
     schemaVersion: "contractility.reconstruction-scope.v1",
     baseContract: {
@@ -129,7 +131,9 @@ if (model === "missing-model") {
           pages: [1],
           agreementNumber: mixedBundle ? "6" : `TEST-${document.order}`,
           agreementDate: mixedBundle ? "01.01.2024" : "02.01.2020",
-          referencedContractNumber: mixedBundle ? "32-01/10" : "TEST-1",
+          referencedContractNumber: invalidReconstructionScope
+            ? "OTHER-1"
+            : mixedBundle ? "32-01/10" : "TEST-1",
           referencedContractDate: mixedBundle ? "01.12.2011" : "01.01.2020",
           decision: unreadableBaseIdentity ? "unresolved" : "included",
           reason: unreadableBaseIdentity
@@ -196,7 +200,7 @@ if (model === "missing-model") {
   await readFile(path.join(process.cwd(), task.paths.reconstructionScope), "utf8");
   const artifacts = path.join(process.cwd(), "artifacts");
   const malformedPlan = mode.includes("malformed-plan")
-    && !prompt.includes("Recovery after invalid JSON artifacts");
+    && !prompt.includes("Recovery after invalid plan artifacts");
   const unresolvedFields = mode.includes("unreadable-base-identity")
     ? [{
       target: "Реквизиты базового договора",
