@@ -34,6 +34,7 @@ import {
 import {
   findingFingerprint,
   formatRetryPrompt,
+  formatSynthesisRetryPrompt,
   parseReviewReport,
   parseSynthesisResult,
   reviewOutputContract,
@@ -775,7 +776,7 @@ async function runSynthesis({
 
 Synthesis task: synthesis-task.json
 Untrusted findings: untrusted-findings.json`;
-  const result = await runGigacode({
+  let result = await runGigacode({
     config: executorConfig(config),
     model: config.models.synthesizer,
     prompt,
@@ -789,11 +790,68 @@ Untrusted findings: untrusted-findings.json`;
     throw new Error(`Арбитр завершился с ошибкой: ${formatGigacodeFailure(result)}`);
   }
   assertRequestedModel(result, config.models.synthesizer);
+  const knownFindingIds = new Set(findingMap.keys());
+  let synthesis;
+  let lastError;
+  for (let attempt = 0; attempt <= config.review.formatRetries; attempt += 1) {
+    try {
+      synthesis = parseSynthesisResult(result.output, knownFindingIds);
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt === config.review.formatRetries) break;
+      const beforeFormatRetryInventory = await packageInventory(
+        path.join(roundDirectory, "package"),
+      );
+      const beforeFormatRetryFingerprint = await workspaceFingerprint(
+        roundDirectory,
+        beforeFormatRetryInventory,
+      );
+      result = await runGigacode({
+        config: executorConfig(config),
+        model: config.models.synthesizer,
+        prompt: `${prompt}\n\n${formatSynthesisRetryPrompt(result.output, error)}`,
+        cwd: roundDirectory,
+        session: `synthesis-format:${round}:${attempt + 1}`,
+        onEvent: onGigacodeEvent,
+        transcriptDirectory: transcriptDirectory(config, runDirectory),
+        diagnosticDirectory: diagnosticDirectory(runDirectory),
+      });
+      if (!result.ok) {
+        lastError = new Error(
+          `повторный запрос завершился с ошибкой: ${formatGigacodeFailure(result)}`,
+        );
+        break;
+      }
+      assertRequestedModel(result, config.models.synthesizer);
+      await verifyEvidenceWorkspace(
+        path.join(roundDirectory, "evidence"),
+        evidenceManifestSha256,
+      );
+      const afterFormatRetryInventory = await packageInventory(
+        path.join(roundDirectory, "package"),
+      );
+      const afterFormatRetryFingerprint = await workspaceFingerprint(
+        roundDirectory,
+        afterFormatRetryInventory,
+      );
+      if (afterFormatRetryFingerprint !== beforeFormatRetryFingerprint) {
+        throw new Error(
+          "Format-retry арбитра изменил package или обязательные артефакты.",
+        );
+      }
+    }
+  }
+  if (lastError || !synthesis) {
+    throw new Error(
+      `Арбитр нарушил формат: ${lastError?.message ?? formatGigacodeFailure(result)}`,
+    );
+  }
   await verifyEvidenceWorkspace(
     path.join(roundDirectory, "evidence"),
     evidenceManifestSha256,
   );
-  const synthesis = parseSynthesisResult(result.output, new Set(findingMap.keys()));
   const consensus = {
     schemaVersion: "contractility.review-consensus.v1",
     round,

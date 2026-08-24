@@ -273,7 +273,7 @@ if (model === "missing-model") {
     && model === "review-model-b"
   ) {
     emitText("JSON сохранён в отчёт reviewer-а.");
-  } else if (mode === "fix-once") {
+  } else if (mode.includes("fix-once")) {
     const roundDirectory = process.cwd();
     const xml = await readFile(path.join(roundDirectory, "package/word/document.xml"), "utf8");
     if (!xml.includes("исправлено")) {
@@ -305,20 +305,32 @@ if (model === "missing-model") {
     await readFile(path.join(roundDirectory, "synthesis-task.json"), "utf8"),
   );
   await readFile(path.join(roundDirectory, task.paths.reconstructionScope), "utf8");
-  if (mode === "fix-once" && task.findingIds.length > 0) {
+  if (mode.includes("fix-once") && task.findingIds.length > 0) {
     const documentPath = path.join(roundDirectory, "package/word/document.xml");
     const xml = await readFile(documentPath, "utf8");
-    await writeFile(
-      documentPath,
-      xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),
+    const formatRecovery = prompt.includes(
+      "Structured-output recovery after review synthesis",
     );
-    emit({
-      status: "fixed",
-      acceptedFindingIds: task.findingIds,
-      rejectedFindingIds: [],
-      unresolvedFindingIds: [],
-      summary: "Подтверждённое замечание исправлено.",
-    });
+    if (!formatRecovery) {
+      await writeFile(
+        documentPath,
+        xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),
+      );
+    }
+    if (
+      mode.includes("synthesis-format-retry")
+      && !formatRecovery
+    ) {
+      emitText("Все задачи выполнены, замечания исправлены в package/word/document.xml.");
+    } else {
+      emit({
+        status: "fixed",
+        acceptedFindingIds: task.findingIds,
+        rejectedFindingIds: [],
+        unresolvedFindingIds: [],
+        summary: "Подтверждённое замечание исправлено.",
+      });
+    }
   } else {
     emit({
       status: "done",

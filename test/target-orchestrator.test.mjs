@@ -31,6 +31,7 @@ import {
 } from "../src/target/runner.mjs";
 import {
   formatRetryPrompt,
+  formatSynthesisRetryPrompt,
   parseReviewReport,
 } from "../src/target/review.mjs";
 import {
@@ -414,6 +415,17 @@ test("review retry names the validation failure and requires re-verification", (
   assert.match(prompt, /Perform the assigned review again/);
   assert.match(prompt, /Do not infer a\s+pass verdict/);
   assert.match(prompt, /entire final assistant response must be exactly one JSON object/);
+});
+
+test("synthesis retry preserves prior fixes and requires one JSON object", () => {
+  const prompt = formatSynthesisRetryPrompt(
+    "Все задачи выполнены.",
+    new TypeError("review synthesis: некорректный JSON"),
+  );
+  assert.match(prompt, /strictly read-only for package\//);
+  assert.match(prompt, /do not\s+repeat, finish, revert, or make any package/);
+  assert.match(prompt, /Classify every finding id\s+exactly once/);
+  assert.match(prompt, /return exactly the same single JSON object/);
 });
 
 test("target config allows one model for every agent role", () => {
@@ -930,7 +942,7 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
     sources: { "document-1": contractPath, "document-2": amendmentPath },
     outputRoot: path.join(temporary, "cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "fix-once";
+  process.env.FAKE_GIGACODE_MODE = "fix-once-synthesis-format-retry";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -943,6 +955,7 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
       "utf8",
     );
     assert.match(finalXml, /исправлено/);
+    assert.equal(finalXml.match(/исправлено/g)?.length, 1);
     assert.equal(
       await readFile(
         path.join(run.runDirectory, "rounds/02/evidence/manifest.json"),
@@ -953,6 +966,18 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
         "utf8",
       ),
     );
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.ok(agentStatuses.some((status) =>
+      status.session === "synthesis-format:1:1"
+      && status.role === "synthesizer-format"
+      && status.status === "completed"));
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

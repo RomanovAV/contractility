@@ -20,6 +20,13 @@ function sessionIdentity(session) {
   if (parts[0] === "synthesis") {
     return { role: "synthesizer", round: Number(parts[1]), reviewerId: null };
   }
+  if (parts[0] === "synthesis-format") {
+    return {
+      role: "synthesizer-format",
+      round: Number(parts[1]),
+      reviewerId: null,
+    };
+  }
   if (session === "producer-reconstruct") {
     return { role: "producer-reconstruct", round: 1, reviewerId: null };
   }
