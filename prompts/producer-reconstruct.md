@@ -28,6 +28,11 @@ Required work:
    instrument. Split every `additional-agreement` document into each separately
    headed or signed agreement it contains and identify its source pages,
    agreement number/date, and explicitly referenced base-contract number/date.
+   Copy `sourceDocumentId` verbatim from the corresponding document `id` in
+   `reconstruction-task.json`/`evidence/manifest.json`. Never derive it from a
+   filename and never invent a separate id for an instrument inside a bundled
+   PDF. Every instrument from the same PDF container must repeat that container's
+   exact document id and use `pages` to identify its location.
    Use the unresolved-field marker for any exact value that remains unreadable.
 4. Compare contract identities while tolerating only harmless OCR/typographic
    differences: surrounding `№`/`N`, whitespace, dash glyphs, and punctuation.
@@ -45,7 +50,8 @@ Required work:
    for each instrument.
    Record every contained agreement, including each excluded agreement and the
    reason it is outside scope. Every additional-agreement evidence document must
-   have at least one entry.
+   have at least one entry. Before writing the file, verify that every
+   `sourceDocumentId` is an exact member of the task's `evidenceDocuments` list.
 7. Reconstruct the complete current contract by applying only included signed
    instruments in strict input order and, within a bundled PDF, page order.
 8. Apply the trusted conflict policy from the task. A later instruction that

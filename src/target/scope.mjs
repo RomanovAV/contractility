@@ -73,7 +73,14 @@ export function validateReconstructionScope(scope, evidenceManifest) {
     const label = `instruments[${index}]`;
     const sourceDocument = documentsById.get(instrument?.sourceDocumentId);
     if (!sourceDocument) {
-      throw new TypeError(`${label}.sourceDocumentId отсутствует в OCR-evidence.`);
+      const actualId = JSON.stringify(instrument?.sourceDocumentId ?? null);
+      const allowedIds = amendmentDocuments
+        .map((document) => JSON.stringify(document.id))
+        .join(", ");
+      throw new TypeError(
+        `${label}.sourceDocumentId=${actualId} отсутствует в OCR-evidence. `
+        + `Допустимые ID PDF-контейнеров: ${allowedIds}.`,
+      );
     }
     coveredDocumentIds.add(sourceDocument.id);
     if (

@@ -308,6 +308,9 @@ function producerArtifactRetryPrompt({
   const recoveryInstructions = stage === "reconstruct"
     ? `- re-read the trusted task and OCR evidence, then overwrite reconstruction-scope.json
   through a JSON serializer;
+- copy each sourceDocumentId verbatim from reconstruction-task.json.evidenceDocuments;
+  use the same PDF-container id for every instrument split from that PDF, and never invent
+  per-instrument ids or derive ids from filenames;
 - compare every instrument's referenced contract number and date with the base contract;
 - set decision=included only for an exact match, decision=excluded for a resolved mismatch,
   and decision=unresolved when either identity is not established exactly;
@@ -938,6 +941,12 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       caseId: verifiedCase.manifest.caseId,
       policy: formationPolicy(),
       evidenceManifestSha256,
+      evidenceDocuments: evidenceWorkspace.manifest.documents.map((document) => ({
+        id: document.id,
+        role: document.role,
+        order: document.order,
+        pageCount: document.pageCount,
+      })),
     };
     await atomicWriteJson(path.join(firstRoundDirectory, "reconstruction-task.json"), {
       schemaVersion: "contractility.producer-reconstruction-task.v1",

@@ -548,6 +548,16 @@ test("reconstruction scope validates contract identity after harmless normalizat
     }, evidenceManifest),
     /исключён, хотя номер и дата.*совпадают/,
   );
+  assert.throws(
+    () => validateReconstructionScope({
+      ...scope,
+      instruments: [{
+        ...scope.instruments[0],
+        sourceDocumentId: "document-2-instrument-1",
+      }],
+    }, evidenceManifest),
+    /sourceDocumentId="document-2-instrument-1".*Допустимые ID.*"document-2"/,
+  );
 });
 
 test("reconstruction scope preserves unreadable identities for human completion", () => {
@@ -709,6 +719,10 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
       producerTask.policy.fullClauseReplacementPolicy,
       "supersede-entire-prior-clause-body-including-omitted-tiers-and-exceptions",
     );
+    assert.deepEqual(producerTask.evidenceDocuments, [
+      { id: "document-1", role: "contract", order: 1, pageCount: 1 },
+      { id: "document-2", role: "additional-agreement", order: 2, pageCount: 1 },
+    ]);
     const unresolvedScope = JSON.parse(await readFile(
       path.join(run.runDirectory, "rounds/01/artifacts/reconstruction-scope.json"),
       "utf8",
@@ -892,7 +906,8 @@ test("mixed agreement bundle excludes other contracts and applies full clause re
     outputRoot: path.join(temporary, "cases"),
   });
   process.env.FAKE_GIGACODE_MODE =
-    "mixed-contract-bundle-invalid-reconstruction-scope";
+    "mixed-contract-bundle-invalid-reconstruction-scope-"
+    + "invalid-reconstruction-source-id";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],

@@ -81,6 +81,8 @@ if (model === "missing-model") {
   const unreadableBaseIdentity = mode.includes("unreadable-base-identity");
   const invalidReconstructionScope = mode.includes("invalid-reconstruction-scope")
     && !prompt.includes("Recovery after invalid reconstruct artifacts");
+  const invalidReconstructionSourceId = mode.includes("invalid-reconstruction-source-id")
+    && !prompt.includes("copy each sourceDocumentId verbatim");
   const scope = {
     schemaVersion: "contractility.reconstruction-scope.v1",
     baseContract: {
@@ -136,7 +138,9 @@ if (model === "missing-model") {
           ];
         }
         return [{
-          sourceDocumentId: document.id,
+          sourceDocumentId: invalidReconstructionSourceId
+            ? `${document.id}-instrument-1`
+            : document.id,
           pages: [1],
           agreementNumber: mixedBundle ? "6" : `TEST-${document.order}`,
           agreementDate: mixedBundle ? "01.01.2024" : "02.01.2020",
