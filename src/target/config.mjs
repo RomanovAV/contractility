@@ -21,6 +21,7 @@ export async function loadTargetConfig(configPath, { allowPlaceholders = false }
       maxRounds: 5,
       maxParallel: 5,
       formatRetries: 1,
+      artifactRetries: 2,
       stallRounds: 2,
       ...config.review,
     },
@@ -70,6 +71,7 @@ export function validateTargetConfig(config, { allowPlaceholders = false } = {})
     ["maxRounds", 1, 20],
     ["maxParallel", 1, 12],
     ["formatRetries", 0, 3],
+    ["artifactRetries", 0, 5],
     ["stallRounds", 1, 5],
   ]) {
     const value = config.review?.[field];

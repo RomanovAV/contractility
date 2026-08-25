@@ -49,6 +49,7 @@
     "maxRounds": 5,
     "maxParallel": 5,
     "formatRetries": 1,
+    "artifactRetries": 2,
     "stallRounds": 2
   },
   "storage": {

@@ -214,6 +214,12 @@ if (model === "missing-model") {
   const artifacts = path.join(process.cwd(), "artifacts");
   const malformedPlan = mode.includes("malformed-plan")
     && !prompt.includes("Recovery after invalid plan artifacts");
+  const incompletePlan = mode.includes("incomplete-plan-artifacts")
+    && (
+      mode.includes("incomplete-plan-artifacts-always")
+      || !prompt.includes("Recovery after invalid plan artifacts")
+      || prompt.includes("attempt 1 of")
+    );
   const unresolvedFields = mode.includes("unreadable-base-identity")
     ? [{
       target: "Реквизиты базового договора",
@@ -222,11 +228,21 @@ if (model === "missing-model") {
       page: 1,
       marker: humanRequiredMarker,
     }]
+    : mode.includes("missing-unresolved-marker")
+    ? ["Поле шаблона 1", "Поле шаблона 2"].map((target) => ({
+      target,
+      reason: "Значение отсутствует в доказательствах.",
+      sourceDocumentId: "document-1",
+      page: 1,
+      marker: humanRequiredMarker,
+    }))
     : [];
   await writeFile(
     path.join(artifacts, "change-register.json"),
     malformedPlan
       ? `{"changes":[{"evidence":"ПАО "ВымпелКом""}]}\n`
+      : incompletePlan
+      ? `${JSON.stringify({ changes: [] }, null, 2)}\n`
       : `${JSON.stringify({ changes: [], unresolvedFields }, null, 2)}\n`,
   );
   await writeFile(
@@ -248,6 +264,21 @@ if (model === "missing-model") {
       xml.replace(
         "Тестовое дополнительное соглашение",
         `Тестовое дополнительное соглашение — ${humanRequiredMarker}`,
+      ),
+    );
+  }
+  if (
+    mode.includes("missing-unresolved-marker")
+    && prompt.includes("Recovery after invalid apply artifacts")
+  ) {
+    const documentPath = path.join(process.cwd(), "package/word/document.xml");
+    const xml = await readFile(documentPath, "utf8");
+    await writeFile(
+      documentPath,
+      xml.replace(
+        "Тестовое дополнительное соглашение",
+        `Тестовое дополнительное соглашение — ${humanRequiredMarker}; `
+          + humanRequiredMarker,
       ),
     );
   }
@@ -364,7 +395,15 @@ if (model === "missing-model") {
   }
   if (mode.includes("fix-once") && task.findingIds.length > 0) {
     const documentPath = path.join(roundDirectory, "package/word/document.xml");
-    const xml = await readFile(documentPath, "utf8");
+    let xml = await readFile(documentPath, "utf8");
+    if (mode.includes("synthesis-invalid-artifact")) {
+      const recovery = prompt.includes("Recovery after invalid synthesis artifacts");
+      if (recovery && !mode.includes("synthesis-invalid-artifact-always")) {
+        xml = xml.replace("<broken-synthesis-artifact>", "");
+      } else if (!xml.includes("<broken-synthesis-artifact>")) {
+        xml += "<broken-synthesis-artifact>";
+      }
+    }
     await writeFile(
       documentPath,
       xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),

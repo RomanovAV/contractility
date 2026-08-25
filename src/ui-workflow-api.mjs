@@ -415,6 +415,7 @@ async function writeRunDiagnosticBundle(runId, runDirectory, config) {
       retryCount: config.gigacode.retryCount,
       retryDelaySeconds: config.gigacode.retryDelaySeconds,
       formatRetries: config.review.formatRetries,
+      artifactRetries: config.review.artifactRetries,
       retainAgentTranscripts: config.storage.retainAgentTranscripts,
     },
     eventLog,

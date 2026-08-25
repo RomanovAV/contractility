@@ -168,12 +168,31 @@ export async function packageInventory(packageDirectory) {
   return inventory;
 }
 
-export async function editablePackageContainsText(packageDirectory, text) {
+function visibleWordText(xml) {
+  return [...xml.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)]
+    .map((match) => match[1]
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+      .replaceAll("&quot;", "\"")
+      .replaceAll("&apos;", "'")
+      .replaceAll("&amp;", "&"))
+    .join("");
+}
+
+export async function editablePackageTextCount(packageDirectory, text) {
+  const needle = String(text);
+  if (!needle) return 0;
+  let count = 0;
   for (const file of await walk(packageDirectory)) {
     if (!EDITABLE_PARTS.some((pattern) => pattern.test(file.relative))) continue;
-    if ((await readFile(file.absolute, "utf8")).includes(text)) return true;
+    const visibleText = visibleWordText(await readFile(file.absolute, "utf8"));
+    let offset = 0;
+    while ((offset = visibleText.indexOf(needle, offset)) >= 0) {
+      count += 1;
+      offset += needle.length;
+    }
   }
-  return false;
+  return count;
 }
 
 export function comparePreservedParts(referenceInventory, candidateInventory) {

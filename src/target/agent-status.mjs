@@ -34,6 +34,13 @@ function sessionIdentity(session) {
       reviewerId: null,
     };
   }
+  if (parts[0] === "synthesis-artifact") {
+    return {
+      role: "synthesizer-artifact-retry",
+      round: Number(parts[1]),
+      reviewerId: null,
+    };
+  }
   if (session === "producer-reconstruct") {
     return { role: "producer-reconstruct", round: 1, reviewerId: null };
   }
@@ -41,7 +48,7 @@ function sessionIdentity(session) {
     return { role: "producer-plan", round: 1, reviewerId: null };
   }
   const artifactRetry = session.match(
-    /^producer-(reconstruct|plan)-artifact-retry$/,
+    /^producer-(reconstruct|plan|apply)-artifact-retry(?::\d+)?$/,
   );
   if (artifactRetry) {
     return {

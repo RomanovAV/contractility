@@ -1395,13 +1395,25 @@ function gigacodeSessionLabel(session) {
   if (session === "producer-reconstruct-status-retry") {
     return "Исправление статуса реконструкции";
   }
+  if (session?.startsWith("producer-reconstruct-artifact-retry")) {
+    return "Исправление реконструкции договора";
+  }
   if (session === "producer-plan") return "Планирование изменений";
   if (session === "producer-plan-status-retry") return "Исправление статуса плана";
+  if (session?.startsWith("producer-plan-artifact-retry")) {
+    return "Исправление плана изменений";
+  }
   if (session === "producer-apply") return "Применение изменений к DOCX";
   if (session === "producer-apply-status-retry") {
     return "Исправление статуса применения";
   }
+  if (session?.startsWith("producer-apply-artifact-retry")) {
+    return "Исправление артефактов DOCX";
+  }
   if (session?.startsWith("synthesis:")) return "Арбитр";
+  if (session?.startsWith("synthesis-artifact:")) {
+    return "Исправление артефактов арбитра";
+  }
   if (session?.startsWith("synthesis-format:")) return "Исправление формата арбитра";
   if (session?.startsWith("synthesis-recovery:")) return "Повторная проверка арбитра";
   if (session?.startsWith("review-format:")) return "Исправление формата reviewer";
