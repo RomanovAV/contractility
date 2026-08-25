@@ -54,6 +54,15 @@ if (model === "missing-model") {
     await writeFile(marker, "retried\n");
     emitText("[API Error: terminated (cause: other side closed)]");
   }
+} else if (prompt.includes("Simulate model fallback and one 400 termination")) {
+  const marker = path.join(process.cwd(), ".fake-400-termination-retried");
+  try {
+    await readFile(marker, "utf8");
+    emit({ status: "ok" });
+  } catch {
+    await writeFile(marker, "retried\n");
+    emitText("[API Error: 400 terminated]");
+  }
 } else if (prompt.includes('Return exactly {"status":"ok"}')) {
   emit({ status: "ok" });
 } else if (prompt.includes("reconstruct the current contract from signed OCR evidence")) {

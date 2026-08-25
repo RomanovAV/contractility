@@ -254,6 +254,7 @@ test("runGigacode falls back to the CLI default when an explicit model is missin
   });
   assert.equal(result.ok, true);
   assert.equal(result.attempt, 2);
+  assert.equal(result.retryAttempt, 1);
   assert.equal(result.requestedModel, "missing-model");
   assert.equal(result.effectiveModel, "default");
   assert.equal(result.modelFallbackUsed, true);
@@ -290,6 +291,7 @@ test("runGigacode retries a transport API error even when the CLI exits successf
   });
   assert.equal(result.ok, true);
   assert.equal(result.attempt, 2);
+  assert.equal(result.retryAttempt, 2);
   assert.equal(result.output, '{"status":"ok"}');
   assert.ok(events.some((event) =>
     event.event === "finished"
@@ -307,6 +309,54 @@ test("runGigacode retries a transport API error even when the CLI exits successf
   assert.match(firstDiagnostic.outputPreview, /other side closed/);
   assert.equal(firstDiagnostic.protocol.resultEvents[0].subtype, null);
   assert.equal(firstDiagnostic.protocol.resultEvents[0].resultType, "string");
+});
+
+test("runGigacode retries 400 terminated after model fallback", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-400-terminated-"));
+  const events = [];
+  const diagnosticDirectory = path.join(temporary, "diagnostics");
+  const result = await runGigacode({
+    config: {
+      command: process.execPath,
+      commandArgs: [fakeGigacode],
+      sessionTimeoutSeconds: 10,
+      idleTimeoutSeconds: 3,
+      retryCount: 1,
+      retryDelaySeconds: 0,
+    },
+    model: "missing-model",
+    prompt: "Simulate model fallback and one 400 termination",
+    cwd: temporary,
+    session: "400-terminated-test",
+    diagnosticDirectory,
+    onEvent(event, fields) {
+      events.push({ event, ...fields });
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 3);
+  assert.equal(result.retryAttempt, 2);
+  assert.equal(result.effectiveModel, "default");
+  assert.equal(result.modelFallbackUsed, true);
+  assert.ok(events.some((event) =>
+    event.event === "retrying"
+    && event.reason === "model-not-found-fallback"
+    && event.nextAttempt === 2
+    && event.nextRetryAttempt === 1));
+  assert.ok(events.some((event) =>
+    event.event === "retrying"
+    && event.reason === "transient-error"
+    && event.nextAttempt === 3
+    && event.nextRetryAttempt === 2));
+  const terminationDiagnostic = JSON.parse(await readFile(
+    path.join(diagnosticDirectory, "400-terminated-test.attempt-2.diagnostic.json"),
+    "utf8",
+  ));
+  assert.equal(terminationDiagnostic.transient, true);
+  assert.equal(terminationDiagnostic.attempt, 2);
+  assert.equal(terminationDiagnostic.retryAttempt, 1);
+  assert.match(terminationDiagnostic.outputPreview, /400 terminated/);
 });
 
 test("producer status parser accepts one status object with harmless model formatting", () => {
@@ -717,10 +767,16 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
       && status.status === "completed"));
     assert.ok(agentStatuses
       .filter((status) => status.role.startsWith("producer-"))
-      .every((status) => status.attempt === 2));
+      .every((status) =>
+        status.attempt === 1
+        && status.executionAttempt === 2
+        && status.modelFallbackUsed === true));
     assert.ok(agentStatuses
       .filter((status) => status.role.startsWith("reviewer"))
-      .every((status) => status.attempt === 1));
+      .every((status) =>
+        status.attempt === 1
+        && status.executionAttempt === 1
+        && status.modelFallbackUsed === false));
     await assert.rejects(() => finalizeRun(run.runDirectory), /невозможна/);
     await assert.rejects(() => approveRun({
       runDirectory: run.runDirectory,

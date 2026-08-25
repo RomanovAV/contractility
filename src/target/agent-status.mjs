@@ -106,9 +106,15 @@ export function createAgentStatusStore(runDirectory) {
       model: fields.model ?? previous?.model ?? null,
       status: statusForEvent(event, fields),
       phase: event,
-      attempt: Number.isInteger(fields.attempt)
-        ? fields.attempt
+      attempt: Number.isInteger(fields.retryAttempt)
+        ? fields.retryAttempt
         : previous?.attempt ?? null,
+      executionAttempt: Number.isInteger(fields.attempt)
+        ? fields.attempt
+        : previous?.executionAttempt ?? null,
+      modelFallbackUsed: typeof fields.modelFallbackUsed === "boolean"
+        ? fields.modelFallbackUsed
+        : previous?.modelFallbackUsed ?? false,
       startedAt: event === "started"
         ? now
         : previous?.startedAt ?? null,

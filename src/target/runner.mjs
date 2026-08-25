@@ -540,8 +540,10 @@ ${escapedReason}
   if (recovered) {
     onGigacodeEvent("recovered", {
       session: `producer-${stage}`,
-      model: config.models.producer,
+      model: result.reportedModels.at(-1) ?? result.effectiveModel,
       attempt: result.attempt,
+      retryAttempt: result.retryAttempt,
+      modelFallbackUsed: result.modelFallbackUsed,
       ok: true,
       durationMs: result.durationMs,
       outputChars: result.output.length,

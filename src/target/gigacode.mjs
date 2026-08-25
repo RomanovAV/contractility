@@ -10,6 +10,7 @@ const APPROVAL_UNAVAILABLE =
 const TRANSIENT_PATTERNS = [
   "FYA_TRANSIENT_TIMEOUT",
   "API Error: terminated (cause: other side closed)",
+  "API Error: 400 terminated",
   "API Error: 529",
   "API Error: 502",
   "API Error: 503",
@@ -308,6 +309,7 @@ async function runOnce({
   transcriptDirectory = null,
   diagnosticDirectory = null,
   attempt = 1,
+  retryAttempt = attempt,
 }) {
   const args = [
     ...(config.commandArgs ?? []),
@@ -326,6 +328,7 @@ async function runOnce({
     requestedModel,
     modelFallbackUsed,
     attempt,
+    retryAttempt,
     command: config.command,
     promptChars: prompt.length,
   });
@@ -350,6 +353,7 @@ async function runOnce({
     requestedModel,
     modelFallbackUsed,
     attempt,
+    retryAttempt,
     pid: child.pid,
   });
 
@@ -387,12 +391,26 @@ async function runOnce({
   child.stdout.on("data", (chunk) => {
     stdout = append(stdout, chunk);
     writeTranscriptChunk(transcript, "stdout", chunk);
-    onEvent("activity", { session, model, attempt, source: "stdout" });
+    onEvent("activity", {
+      session,
+      model,
+      modelFallbackUsed,
+      attempt,
+      retryAttempt,
+      source: "stdout",
+    });
   });
   child.stderr.on("data", (chunk) => {
     stderr = append(stderr, chunk);
     writeTranscriptChunk(transcript, "stderr", chunk);
-    onEvent("activity", { session, model, attempt, source: "stderr" });
+    onEvent("activity", {
+      session,
+      model,
+      modelFallbackUsed,
+      attempt,
+      retryAttempt,
+      source: "stderr",
+    });
   });
 
   let result;
@@ -422,6 +440,7 @@ async function runOnce({
       requestedModel,
       modelFallbackUsed,
       attempt,
+      retryAttempt,
       startedAt,
       finishedAt,
       ok: false,
@@ -436,6 +455,7 @@ async function runOnce({
       effectiveModel: model,
       modelFallbackUsed,
       attempt,
+      retryAttempt,
       startedAt,
       finishedAt,
       ok: false,
@@ -499,6 +519,7 @@ async function runOnce({
     requestedModel,
     modelFallbackUsed,
     attempt,
+    retryAttempt,
     ok: response.ok,
     errorKind,
     knownCliCancellation: response.knownCliCancellation,
@@ -513,6 +534,7 @@ async function runOnce({
       effectiveModel: model,
       modelFallbackUsed,
       attempt,
+      retryAttempt,
       startedAt,
       finishedAt: new Date().toISOString(),
       ok: response.ok,
@@ -534,6 +556,7 @@ async function runOnce({
     effectiveModel: model,
     modelFallbackUsed,
     attempt,
+    retryAttempt,
     startedAt,
     finishedAt: new Date().toISOString(),
     ok: response.ok,
@@ -571,6 +594,7 @@ export async function runGigacode(options) {
   let modelFallbackUsed = false;
   let transientRetries = 0;
   let attempt = 1;
+  let retryAttempt = 1;
   let last;
   while (true) {
     last = await runOnce({
@@ -579,9 +603,11 @@ export async function runGigacode(options) {
       requestedModel,
       modelFallbackUsed,
       attempt,
+      retryAttempt,
     });
     Object.assign(last, {
       attempt,
+      retryAttempt,
       requestedModel,
       effectiveModel: activeModel,
       modelFallbackUsed,
@@ -604,8 +630,11 @@ export async function runGigacode(options) {
         requestedModel,
         nextModel: DEFAULT_MODEL,
         reason: "model-not-found-fallback",
+        modelFallbackUsed: true,
         attempt,
         nextAttempt: attempt + 1,
+        retryAttempt,
+        nextRetryAttempt: retryAttempt,
         retryDelaySeconds: 0,
       });
       attempt += 1;
@@ -621,11 +650,14 @@ export async function runGigacode(options) {
       reason: "transient-error",
       attempt,
       nextAttempt: attempt + 1,
+      retryAttempt,
+      nextRetryAttempt: retryAttempt + 1,
       retryDelaySeconds,
     });
     await delay(retryDelaySeconds * 1000);
     transientRetries += 1;
     attempt += 1;
+    retryAttempt += 1;
   }
 }
 

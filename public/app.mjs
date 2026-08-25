@@ -1518,7 +1518,10 @@ function renderReviewers(run) {
       ? new Date(agent.lastActivityAt).toLocaleTimeString("ru-RU")
       : null;
     const metadataLines = createReviewerMetadataLines({
-      model: reviewer.model ?? report?.reviewer?.requestedModel,
+      model: agent?.model
+        ?? report?.reviewer?.reportedModels?.at(-1)
+        ?? reviewer.model
+        ?? report?.reviewer?.requestedModel,
       attempt: agent?.attempt,
       activity,
     });
