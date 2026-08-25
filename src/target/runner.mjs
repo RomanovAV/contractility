@@ -36,9 +36,11 @@ import {
   findingFingerprint,
   formatRetryPrompt,
   formatSynthesisRetryPrompt,
+  hasCompleteFindingIdCoverage,
   parseReviewReport,
   parseSynthesisResult,
   reviewOutputContract,
+  synthesisReadOnlyRecoveryPrompt,
 } from "./review.mjs";
 import {
   materializeEvidenceWorkspace,
@@ -824,16 +826,17 @@ Untrusted findings: untrusted-findings.json`;
         roundDirectory,
         beforeFormatRetryInventory,
       );
-      const retrySession = `synthesis-format:${round}:${attempt + 1}`;
+      const findingIds = [...knownFindingIds];
+      const formattingOnly = hasCompleteFindingIdCoverage(result.output, findingIds);
+      const retryKind = formattingOnly ? "format" : "recovery";
+      const retrySession = `synthesis-${retryKind}:${round}:${attempt + 1}`;
       synthesisSessions.push(retrySession);
       result = await runSynthesisModel({
         config: executorConfig(config),
         model: config.models.synthesizer,
-        prompt: formatSynthesisRetryPrompt(
-          result.output,
-          error,
-          [...knownFindingIds],
-        ),
+        prompt: formattingOnly
+          ? formatSynthesisRetryPrompt(result.output, error, findingIds)
+          : synthesisReadOnlyRecoveryPrompt(result.output, error, findingIds),
         cwd: roundDirectory,
         session: retrySession,
         onEvent: onGigacodeEvent,

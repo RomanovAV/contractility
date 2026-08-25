@@ -27,6 +27,13 @@ function sessionIdentity(session) {
       reviewerId: null,
     };
   }
+  if (parts[0] === "synthesis-recovery") {
+    return {
+      role: "synthesizer-recovery",
+      round: Number(parts[1]),
+      reviewerId: null,
+    };
+  }
   if (session === "producer-reconstruct") {
     return { role: "producer-reconstruct", round: 1, reviewerId: null };
   }

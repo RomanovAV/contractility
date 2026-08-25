@@ -32,7 +32,9 @@ import {
 import {
   formatRetryPrompt,
   formatSynthesisRetryPrompt,
+  hasCompleteFindingIdCoverage,
   parseReviewReport,
+  synthesisReadOnlyRecoveryPrompt,
 } from "../src/target/review.mjs";
 import {
   HUMAN_REQUIRED_MARKER,
@@ -526,7 +528,43 @@ test("synthesis retry only serializes prior decisions and ends with the JSON con
   assert.doesNotMatch(prompt, /Re-open synthesis-task|Write consensus\.json/);
   assert.ok(
     prompt.lastIndexOf("<UNTRUSTED_INVALID_OUTPUT>")
-      < prompt.lastIndexOf("Your entire response must be that JSON object"),
+      < prompt.lastIndexOf("Do not return prose"),
+  );
+});
+
+test("synthesis retry detects when prior output does not cover every finding id", () => {
+  const findingIds = ["finding-aaaaaaaaaaaaaaaa", "finding-bbbbbbbbbbbbbbbb"];
+  assert.equal(
+    hasCompleteFindingIdCoverage(
+      "finding-aaaaaaaa… accepted; finding-bbbbbbbb… rejected",
+      findingIds,
+    ),
+    true,
+  );
+  assert.equal(
+    hasCompleteFindingIdCoverage("Исправлены четыре замечания без перечисления IDs.", findingIds),
+    false,
+  );
+  assert.equal(
+    hasCompleteFindingIdCoverage("finding-aaaaaaaa… accepted", findingIds),
+    false,
+  );
+});
+
+test("read-only synthesis recovery re-verifies unmapped findings without editing", () => {
+  const findingIds = ["finding-aaaaaaaaaaaaaaaa", "finding-bbbbbbbbbbbbbbbb"];
+  const prompt = synthesisReadOnlyRecoveryPrompt(
+    "Исправлены четыре замечания без перечисления IDs.",
+    new TypeError("review synthesis: некорректный JSON"),
+    findingIds,
+  );
+  assert.match(prompt, /strictly read-only/i);
+  assert.match(prompt, /Re-verify every finding/i);
+  assert.match(prompt, /Do not classify a finding as unresolved merely because/i);
+  assert.match(prompt, new RegExp(JSON.stringify(findingIds).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(
+    prompt.lastIndexOf("<UNTRUSTED_INVALID_OUTPUT>")
+      < prompt.lastIndexOf("Do not return prose"),
   );
 });
 
@@ -1067,6 +1105,40 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
       status.session === "synthesis-format:1:1"
       && status.role === "synthesizer-format"
       && status.status === "completed"));
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("review loop uses read-only arbitration when the prior response omits finding ids", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-synthesis-recovery-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE =
+    "fix-once-synthesis-format-retry-synthesis-missing-ids";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    assert.equal(run.state.round, 2);
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.ok(agentStatuses.some((status) =>
+      status.session === "synthesis-recovery:1:1"
+      && status.role === "synthesizer-recovery"
+      && status.status === "completed"));
+    assert.equal(
+      agentStatuses.some((status) => status.session === "synthesis-format:1:1"),
+      false,
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

@@ -1402,6 +1402,8 @@ function gigacodeSessionLabel(session) {
     return "Исправление статуса применения";
   }
   if (session?.startsWith("synthesis:")) return "Арбитр";
+  if (session?.startsWith("synthesis-format:")) return "Исправление формата арбитра";
+  if (session?.startsWith("synthesis-recovery:")) return "Повторная проверка арбитра";
   if (session?.startsWith("review-format:")) return "Исправление формата reviewer";
   if (session?.startsWith("review:")) {
     const reviewerId = session.split(":").slice(2).join(":");
@@ -1569,9 +1571,11 @@ function renderFormationRun(job) {
   renderReviewers(run);
   renderGigacodeStatus(run?.gigacodeStatus ?? null);
 
+  const consensusSummary = run?.consensus?.summary ?? "";
   elements["consensus-panel"].hidden = !run?.consensus;
-  elements["consensus-summary"].textContent = run?.consensus?.summary ?? "";
-  setRunBlocker(runState?.blocker ?? (job.status === "failed" ? job.error : ""));
+  elements["consensus-summary"].textContent = consensusSummary;
+  const blocker = runState?.blocker ?? (job.status === "failed" ? job.error : "");
+  setRunBlocker(blocker === consensusSummary ? "" : blocker);
 
   const awaitingApproval = status === "awaiting-human-approval";
   const approved = status === "approved";

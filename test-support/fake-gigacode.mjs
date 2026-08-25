@@ -312,6 +312,22 @@ if (model === "missing-model") {
   } else {
     emit({ verdict: "pass", findings: [] });
   }
+} else if (prompt.includes("read-only recovery after unstructured review synthesis")) {
+  const trustedIdsMatch = prompt.match(
+    /<TRUSTED_FINDING_IDS>\s*(\[[\s\S]*?\])\s*<\/TRUSTED_FINDING_IDS>/,
+  );
+  const findingIds = trustedIdsMatch ? JSON.parse(trustedIdsMatch[1]) : [];
+  if (mode.includes("synthesis-format-always-invalid")) {
+    emitText(`Классификация завершена для ${findingIds.join(", ")}, итог сохранён.`);
+  } else {
+    emit({
+      status: "fixed",
+      acceptedFindingIds: findingIds,
+      rejectedFindingIds: [],
+      unresolvedFindingIds: [],
+      summary: "Read-only арбитр подтвердил, что исправление уже внесено.",
+    });
+  }
 } else if (prompt.includes("Structured-output recovery after review synthesis")) {
   const trustedIdsMatch = prompt.match(
     /<TRUSTED_FINDING_IDS>\s*(\[[\s\S]*?\])\s*<\/TRUSTED_FINDING_IDS>/,
@@ -324,7 +340,7 @@ if (model === "missing-model") {
     );
   }
   if (mode.includes("synthesis-format-always-invalid")) {
-    emitText("Классификация завершена, итог сохранён.");
+    emitText(`Классификация завершена для ${findingIds.join(", ")}, итог сохранён.`);
   } else {
     emit({
       status: "fixed",
@@ -357,7 +373,12 @@ if (model === "missing-model") {
       mode.includes("synthesis-format-retry")
       || mode.includes("synthesis-format-always-invalid")
     ) {
-      emitText("Все задачи выполнены, замечания исправлены в package/word/document.xml.");
+      emitText(
+        mode.includes("synthesis-missing-ids")
+          ? "Все задачи выполнены, замечания исправлены в package/word/document.xml."
+          : `Все задачи выполнены для ${task.findingIds.join(", ")}; `
+            + "замечания исправлены в package/word/document.xml.",
+      );
     } else {
       emit({
         status: "fixed",
