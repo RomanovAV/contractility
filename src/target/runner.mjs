@@ -3,6 +3,7 @@ import {
   copyFile,
   cp,
   readFile,
+  rm,
   stat,
 } from "node:fs/promises";
 import path from "node:path";
@@ -781,7 +782,16 @@ async function runSynthesis({
 
 Synthesis task: synthesis-task.json
 Untrusted findings: untrusted-findings.json`;
-  let result = await runGigacode({
+  const consensusPath = path.join(roundDirectory, "consensus.json");
+  const runSynthesisModel = async (options) => {
+    await rm(consensusPath, { force: true });
+    try {
+      return await runGigacode(options);
+    } finally {
+      await rm(consensusPath, { force: true });
+    }
+  };
+  let result = await runSynthesisModel({
     config: executorConfig(config),
     model: config.models.synthesizer,
     prompt,
@@ -798,6 +808,7 @@ Untrusted findings: untrusted-findings.json`;
   const knownFindingIds = new Set(findingMap.keys());
   let synthesis;
   let lastError;
+  const synthesisSessions = [`synthesis:${round}`];
   for (let attempt = 0; attempt <= config.review.formatRetries; attempt += 1) {
     try {
       synthesis = parseSynthesisResult(result.output, knownFindingIds);
@@ -813,12 +824,18 @@ Untrusted findings: untrusted-findings.json`;
         roundDirectory,
         beforeFormatRetryInventory,
       );
-      result = await runGigacode({
+      const retrySession = `synthesis-format:${round}:${attempt + 1}`;
+      synthesisSessions.push(retrySession);
+      result = await runSynthesisModel({
         config: executorConfig(config),
         model: config.models.synthesizer,
-        prompt: `${prompt}\n\n${formatSynthesisRetryPrompt(result.output, error)}`,
+        prompt: formatSynthesisRetryPrompt(
+          result.output,
+          error,
+          [...knownFindingIds],
+        ),
         cwd: roundDirectory,
-        session: `synthesis-format:${round}:${attempt + 1}`,
+        session: retrySession,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
         diagnosticDirectory: diagnosticDirectory(runDirectory),
@@ -850,7 +867,9 @@ Untrusted findings: untrusted-findings.json`;
   }
   if (lastError || !synthesis) {
     throw new Error(
-      `Арбитр нарушил формат: ${lastError?.message ?? formatGigacodeFailure(result)}`,
+      `Арбитр не вернул валидный JSON после ${synthesisSessions.length} запусков `
+        + `(${synthesisSessions.join(", ")}): `
+        + `${lastError?.message ?? formatGigacodeFailure(result)}`,
     );
   }
   await verifyEvidenceWorkspace(
@@ -867,7 +886,7 @@ Untrusted findings: untrusted-findings.json`;
     },
     ...synthesis,
   };
-  await atomicWriteJson(path.join(roundDirectory, "consensus.json"), consensus);
+  await atomicWriteJson(consensusPath, consensus);
   return consensus;
 }
 

@@ -118,6 +118,51 @@ function targetConfig(runRoot, { passEnvironment = [] } = {}) {
   };
 }
 
+async function prepareSimpleCase(temporary) {
+  const contract = Buffer.from("%PDF-1.4\ncontract\n%%EOF\n");
+  const amendment = Buffer.from("%PDF-1.4\namendment\n%%EOF\n");
+  const contractPath = path.join(temporary, "contract.pdf");
+  const amendmentPath = path.join(temporary, "amendment.pdf");
+  await writeFile(contractPath, contract);
+  await writeFile(amendmentPath, amendment);
+  const draftPath = await createMinimalDocx(temporary);
+  const draft = await readFile(draftPath);
+  const requestPath = path.join(temporary, "request.json");
+  await writeFile(requestPath, `${JSON.stringify({
+    schemaVersion: "contractility.formation-request.v1",
+    inputs: {
+      signedDocuments: [
+        {
+          id: "document-1",
+          role: "contract",
+          order: 1,
+          complete: true,
+          file: { name: "contract.pdf", sha256: sha256(contract) },
+          pages: [{ number: 1, text: "Договор" }],
+        },
+        {
+          id: "document-2",
+          role: "additional-agreement",
+          order: 2,
+          complete: true,
+          file: { name: "amendment.pdf", sha256: sha256(amendment) },
+          pages: [{ number: 1, text: "Изменение" }],
+        },
+      ],
+      newAgreementEdition: {
+        file: { name: "draft.docx", size: draft.length, sha256: sha256(draft) },
+      },
+    },
+    rules: { requireHumanApprovalBeforeFinalization: true },
+  }, null, 2)}\n`);
+  return prepareCase({
+    requestPath,
+    draftPath,
+    sources: { "document-1": contractPath, "document-2": amendmentPath },
+    outputRoot: path.join(temporary, "cases"),
+  });
+}
+
 test("decodeStreamJson returns result, session and reported model", () => {
   const decoded = decodeStreamJson([
     JSON.stringify({ type: "system", session_id: "s1", model: "m1" }),
@@ -467,15 +512,22 @@ test("review retry names the validation failure and requires re-verification", (
   assert.match(prompt, /entire final assistant response must be exactly one JSON object/);
 });
 
-test("synthesis retry preserves prior fixes and requires one JSON object", () => {
+test("synthesis retry only serializes prior decisions and ends with the JSON contract", () => {
+  const findingIds = ["finding-aaaaaaaaaaaaaaaa", "finding-bbbbbbbbbbbbbbbb"];
   const prompt = formatSynthesisRetryPrompt(
-    "Все задачи выполнены.",
+    "Все задачи выполнены: finding-aaaaaaaa… accepted, finding-bbbbbbbb… rejected.",
     new TypeError("review synthesis: некорректный JSON"),
+    findingIds,
   );
-  assert.match(prompt, /strictly read-only for package\//);
-  assert.match(prompt, /do not\s+repeat, finish, revert, or make any package/);
-  assert.match(prompt, /Classify every finding id\s+exactly once/);
-  assert.match(prompt, /return exactly the same single JSON object/);
+  assert.match(prompt, /formatting-only recovery/i);
+  assert.match(prompt, /do not perform a new legal or document review/i);
+  assert.match(prompt, /Do not use tools, inspect the workspace, read files/i);
+  assert.match(prompt, new RegExp(JSON.stringify(findingIds).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(prompt, /Re-open synthesis-task|Write consensus\.json/);
+  assert.ok(
+    prompt.lastIndexOf("<UNTRUSTED_INVALID_OUTPUT>")
+      < prompt.lastIndexOf("Your entire response must be that JSON object"),
+  );
 });
 
 test("target config allows one model for every agent role", () => {
@@ -971,49 +1023,9 @@ test("mixed agreement bundle excludes other contracts and applies full clause re
 test("review loop applies an arbiter fix and reruns all reviewers on a new candidate", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-cycle-"));
-  const contract = Buffer.from("%PDF-1.4\ncontract\n%%EOF\n");
-  const amendment = Buffer.from("%PDF-1.4\namendment\n%%EOF\n");
-  const contractPath = path.join(temporary, "contract.pdf");
-  const amendmentPath = path.join(temporary, "amendment.pdf");
-  await writeFile(contractPath, contract);
-  await writeFile(amendmentPath, amendment);
-  const draftPath = await createMinimalDocx(temporary);
-  const draft = await readFile(draftPath);
-  const requestPath = path.join(temporary, "request.json");
-  await writeFile(requestPath, `${JSON.stringify({
-    schemaVersion: "contractility.formation-request.v1",
-    inputs: {
-      signedDocuments: [
-        {
-          id: "document-1",
-          role: "contract",
-          order: 1,
-          complete: true,
-          file: { name: "contract.pdf", sha256: sha256(contract) },
-          pages: [{ number: 1, text: "Договор" }],
-        },
-        {
-          id: "document-2",
-          role: "additional-agreement",
-          order: 2,
-          complete: true,
-          file: { name: "amendment.pdf", sha256: sha256(amendment) },
-          pages: [{ number: 1, text: "Изменение" }],
-        },
-      ],
-      newAgreementEdition: {
-        file: { name: "draft.docx", size: draft.length, sha256: sha256(draft) },
-      },
-    },
-    rules: { requireHumanApprovalBeforeFinalization: true },
-  }, null, 2)}\n`);
-  const prepared = await prepareCase({
-    requestPath,
-    draftPath,
-    sources: { "document-1": contractPath, "document-2": amendmentPath },
-    outputRoot: path.join(temporary, "cases"),
-  });
-  process.env.FAKE_GIGACODE_MODE = "fix-once-synthesis-format-retry";
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE =
+    "fix-once-synthesis-format-retry-synthesis-writes-consensus";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -1027,6 +1039,12 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
     );
     assert.match(finalXml, /исправлено/);
     assert.equal(finalXml.match(/исправлено/g)?.length, 1);
+    const consensus = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/02/consensus.json"),
+      "utf8",
+    ));
+    assert.equal(consensus.schemaVersion, "contractility.review-consensus.v1");
+    assert.equal(consensus.status, "done");
     assert.equal(
       await readFile(
         path.join(run.runDirectory, "rounds/02/evidence/manifest.json"),
@@ -1049,6 +1067,60 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
       status.session === "synthesis-format:1:1"
       && status.role === "synthesizer-format"
       && status.status === "completed"));
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("review loop reports every synthesis session after format retries are exhausted", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-synthesis-format-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE =
+    "fix-once-synthesis-format-always-invalid-synthesis-writes-consensus";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    config.review.formatRetries = 2;
+    let failure;
+    await assert.rejects(
+      () => createAndRun({ caseDirectory: prepared.caseDirectory, config }),
+      (error) => {
+        failure = error;
+        assert.match(
+          error.message,
+          /после 3 запусков \(synthesis:1, synthesis-format:1:1, synthesis-format:1:2\)/,
+        );
+        assert.match(error.message, /некорректный JSON/);
+        return true;
+      },
+    );
+    const state = JSON.parse(await readFile(
+      path.join(failure.runDirectory, "state.json"),
+      "utf8",
+    ));
+    assert.equal(state.status, "failed");
+    assert.equal(state.error, failure.message);
+    assert.equal(
+      await exists(path.join(failure.runDirectory, "rounds/01/consensus.json")),
+      false,
+    );
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(failure.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(failure.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.deepEqual(
+      agentStatuses
+        .filter((status) => status.role.startsWith("synthesizer"))
+        .map((status) => status.session)
+        .sort(),
+      ["synthesis-format:1:1", "synthesis-format:1:2", "synthesis:1"],
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

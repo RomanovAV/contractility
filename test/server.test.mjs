@@ -458,6 +458,7 @@ test("workflow API protects mutations and prepares a verified local case", async
   assert.equal(diagnosticBundle.runId, job.runId);
   assert.equal(diagnosticBundle.state.status, "awaiting-human-approval");
   assert.equal(diagnosticBundle.configuration.retryCount, 1);
+  assert.equal(diagnosticBundle.configuration.formatRetries, 0);
   assert.equal(diagnosticBundle.gigacodeAttempts.length, 1);
   assert.equal(
     diagnosticBundle.gigacodeAttempts[0].value.session,

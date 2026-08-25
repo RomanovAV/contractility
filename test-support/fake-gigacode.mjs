@@ -312,27 +312,50 @@ if (model === "missing-model") {
   } else {
     emit({ verdict: "pass", findings: [] });
   }
+} else if (prompt.includes("Structured-output recovery after review synthesis")) {
+  const trustedIdsMatch = prompt.match(
+    /<TRUSTED_FINDING_IDS>\s*(\[[\s\S]*?\])\s*<\/TRUSTED_FINDING_IDS>/,
+  );
+  const findingIds = trustedIdsMatch ? JSON.parse(trustedIdsMatch[1]) : [];
+  if (mode.includes("synthesis-writes-consensus")) {
+    await writeFile(
+      path.join(process.cwd(), "consensus.json"),
+      `${JSON.stringify({ status: "unvalidated-model-file" })}\n`,
+    );
+  }
+  if (mode.includes("synthesis-format-always-invalid")) {
+    emitText("Классификация завершена, итог сохранён.");
+  } else {
+    emit({
+      status: "fixed",
+      acceptedFindingIds: findingIds,
+      rejectedFindingIds: [],
+      unresolvedFindingIds: [],
+      summary: "Подтверждённое замечание исправлено.",
+    });
+  }
 } else if (prompt.includes("independent review synthesis")) {
   const roundDirectory = process.cwd();
   const task = JSON.parse(
     await readFile(path.join(roundDirectory, "synthesis-task.json"), "utf8"),
   );
   await readFile(path.join(roundDirectory, task.paths.reconstructionScope), "utf8");
+  if (mode.includes("synthesis-writes-consensus")) {
+    await writeFile(
+      path.join(roundDirectory, "consensus.json"),
+      `${JSON.stringify({ status: "unvalidated-model-file" })}\n`,
+    );
+  }
   if (mode.includes("fix-once") && task.findingIds.length > 0) {
     const documentPath = path.join(roundDirectory, "package/word/document.xml");
     const xml = await readFile(documentPath, "utf8");
-    const formatRecovery = prompt.includes(
-      "Structured-output recovery after review synthesis",
+    await writeFile(
+      documentPath,
+      xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),
     );
-    if (!formatRecovery) {
-      await writeFile(
-        documentPath,
-        xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),
-      );
-    }
     if (
       mode.includes("synthesis-format-retry")
-      && !formatRecovery
+      || mode.includes("synthesis-format-always-invalid")
     ) {
       emitText("Все задачи выполнены, замечания исправлены в package/word/document.xml.");
     } else {

@@ -38,7 +38,8 @@ For every finding id, classify it exactly once:
 - rejected: disproved by concrete source evidence;
 - unresolved: requires a human legal or document decision.
 
-Write `consensus.json` with the same object you return.
+Do not create or modify `consensus.json`. The orchestrator writes it atomically
+after validating your final response.
 
 Return exactly one JSON object and no Markdown:
 {"status":"done|fixed|blocked","acceptedFindingIds":[],"rejectedFindingIds":[],"unresolvedFindingIds":[],"summary":"short factual summary"}
