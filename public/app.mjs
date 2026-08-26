@@ -27,6 +27,7 @@ import {
 } from "./workspace-snapshot.mjs";
 
 const { createWorker } = Tesseract;
+const FORMATION_JOB_STORAGE_KEY = "contractility.active-formation-job.v1";
 
 GlobalWorkerOptions.workerSrc = new URL(
   "./vendor/pdfjs/pdf.worker.min.mjs",
@@ -77,6 +78,7 @@ const state = {
   formationRunId: null,
   formationRun: null,
   formationPollTimer: null,
+  formationPollPromise: null,
 };
 
 const browserCapabilities = {
@@ -119,6 +121,33 @@ const reviewerLabels = {
 
 function currentDocument() {
   return state.documents[state.selectedDocument] ?? null;
+}
+
+function isServerFormationJobId(jobId) {
+  return /^job-[a-zA-Z0-9-]+$/.test(jobId ?? "");
+}
+
+function storedFormationJobId() {
+  try {
+    const jobId = globalThis.localStorage.getItem(FORMATION_JOB_STORAGE_KEY);
+    return isServerFormationJobId(jobId) ? jobId : null;
+  } catch {
+    return null;
+  }
+}
+
+function setFormationJobId(jobId) {
+  state.formationJobId = jobId;
+  try {
+    if (isServerFormationJobId(jobId)) {
+      globalThis.localStorage.setItem(FORMATION_JOB_STORAGE_KEY, jobId);
+    } else if (jobId == null) {
+      globalThis.localStorage.removeItem(FORMATION_JOB_STORAGE_KEY);
+    }
+  } catch {
+    // Safari private mode may deny persistent storage. The active-job API is
+    // still sufficient to recover a running server task in that case.
+  }
 }
 
 function hasReadyDocuments() {
@@ -1238,7 +1267,7 @@ async function loadWorkspaceSnapshot(fileList) {
     clearTimeout(state.formationPollTimer);
     state.formationPollTimer = null;
     state.formationBusy = false;
-    state.formationJobId = null;
+    setFormationJobId(null);
     state.formationRunId = null;
     state.formationRun = null;
     elements["formation-run-card"].hidden = true;
@@ -1616,41 +1645,124 @@ function renderFormationRun(job) {
     setRunStatus("Готово", "Финальный DOCX сформирован и повторно проверен по SHA-256.", "good");
   } else if (runState) {
     const roundText = runState.round ? ` · раунд ${runState.round}` : "";
-    setRunStatus(run.stateLabel, `${run.stateLabel}${roundText}. Не закрывайте страницу.`);
+    setRunStatus(
+      run.stateLabel,
+      `${run.stateLabel}${roundText}. Формирование выполняет локальный сервер; Safari можно свернуть.`,
+    );
   } else {
-    setRunStatus("Запуск", "GigaCode создаёт рабочий каталог и проверяет входные файлы.");
+    setRunStatus(
+      "Запуск",
+      "Локальный сервер создаёт рабочий каталог и запускает GigaCode независимо от Safari.",
+    );
   }
 }
 
-function scheduleFormationPoll() {
+function scheduleFormationPoll(delayMs = 1000) {
   clearTimeout(state.formationPollTimer);
+  state.formationPollTimer = null;
+  if (globalThis.document.hidden || !isServerFormationJobId(state.formationJobId)) return;
   state.formationPollTimer = setTimeout(() => {
     pollFormationJob().catch((error) => {
-      state.formationBusy = false;
       setRunBlocker(error.message ?? String(error));
-      setRunStatus("Ошибка статуса", "Не удалось получить состояние запуска.", "failed");
+      setRunStatus(
+        "Восстанавливается связь",
+        "Формирование продолжает локальный сервер. Статус будет запрошен повторно.",
+      );
+      scheduleFormationPoll(3000);
       updateFormationState();
     });
-  }, 1000);
+  }, delayMs);
 }
 
 async function pollFormationJob() {
-  if (!state.formationJobId) return;
-  const job = await workflowJson(`/jobs/${encodeURIComponent(state.formationJobId)}`);
-  renderFormationRun(job);
-  if (job.status === "running") {
-    scheduleFormationPoll();
-    return;
+  if (!isServerFormationJobId(state.formationJobId)) return null;
+  if (state.formationPollPromise) return state.formationPollPromise;
+  const jobId = state.formationJobId;
+  const pending = (async () => {
+    const job = await workflowJson(`/jobs/${encodeURIComponent(jobId)}`);
+    if (state.formationJobId !== jobId) return job;
+    renderFormationRun(job);
+    if (job.status === "running") {
+      state.formationBusy = true;
+      scheduleFormationPoll();
+      updateFormationState();
+      return job;
+    }
+    state.formationBusy = false;
+    if (
+      job.status === "failed"
+      || ["blocked", "failed", "finalized"].includes(job.run?.state?.status)
+    ) {
+      setFormationJobId(null);
+    }
+    updateFormationState();
+    setRunning(false);
+    return job;
+  })();
+  state.formationPollPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (state.formationPollPromise === pending) state.formationPollPromise = null;
   }
-  state.formationBusy = false;
+}
+
+async function restoreFormationJob() {
+  if (!state.targetSession?.token || state.formationJobId === "preparing") return;
+  let job = null;
+  const savedJobId = storedFormationJobId();
+  if (savedJobId) {
+    try {
+      job = await workflowJson(`/jobs/${encodeURIComponent(savedJobId)}`);
+    } catch {
+      setFormationJobId(null);
+    }
+  }
+  if (!job) {
+    const active = await workflowJson("/jobs/active");
+    job = active.job;
+  }
+  if (!job) return;
+  setFormationJobId(job.jobId);
+  state.formationBusy = job.status === "running";
+  renderFormationRun(job);
   if (
     job.status === "failed"
     || ["blocked", "failed", "finalized"].includes(job.run?.state?.status)
   ) {
-    state.formationJobId = null;
+    setFormationJobId(null);
   }
   updateFormationState();
   setRunning(false);
+  if (job.status === "running") scheduleFormationPoll();
+}
+
+function pauseFormationStatusUpdates() {
+  clearTimeout(state.formationPollTimer);
+  state.formationPollTimer = null;
+  if (state.formationJobId === "preparing") {
+    setRunStatus(
+      "Загрузка входов",
+      "До получения номера серверного задания Safari должен оставаться активным.",
+    );
+  } else if (state.formationBusy && isServerFormationJobId(state.formationJobId)) {
+    setRunStatus(
+      "Выполняется на сервере",
+      "Safari приостановил обновление экрана; GigaCode продолжает работу в локальном Node-процессе.",
+    );
+  }
+}
+
+function resumeFormationStatusUpdates() {
+  if (!isServerFormationJobId(state.formationJobId)) return;
+  pollFormationJob().catch((error) => {
+    setRunBlocker(error.message ?? String(error));
+    setRunStatus(
+      "Восстанавливается связь",
+      "Не удалось сразу получить статус. Локальный сервер будет опрошен повторно.",
+    );
+    scheduleFormationPoll(3000);
+  });
 }
 
 async function launchFormation() {
@@ -1668,7 +1780,7 @@ async function launchFormation() {
   const formationRequest = buildCurrentFormationRequest();
   let stageId = null;
   state.formationBusy = true;
-  state.formationJobId = "preparing";
+  setFormationJobId("preparing");
   state.formationRunId = null;
   state.formationRun = null;
   elements["download-diagnostics"].disabled = true;
@@ -1677,7 +1789,10 @@ async function launchFormation() {
   renderRunStages(null);
   renderReviewers(null);
   renderGigacodeStatus(null);
-  setRunStatus("Загрузка входов", "Создаётся локальный защищённый case bundle.");
+  setRunStatus(
+    "Загрузка входов",
+    "Создаётся локальный защищённый case bundle. До запуска серверного задания оставьте Safari активным.",
+  );
   updateFormationState();
   setRunning(false);
 
@@ -1724,7 +1839,7 @@ async function launchFormation() {
     const job = await workflowJson(`/cases/${encodeURIComponent(prepared.caseId)}/runs`, {
       method: "POST",
     });
-    state.formationJobId = job.jobId;
+    setFormationJobId(job.jobId);
     renderFormationRun(job);
     scheduleFormationPoll();
   } catch (error) {
@@ -1734,7 +1849,7 @@ async function launchFormation() {
       }).catch(() => {});
     }
     state.formationBusy = false;
-    state.formationJobId = null;
+    setFormationJobId(null);
     setRunBlocker(error.message ?? String(error));
     setRunStatus("Запуск не выполнен", "Проверьте сообщение и конфигурацию GigaCode.", "failed");
     updateFormationState();
@@ -1751,7 +1866,7 @@ async function refreshFormationRun() {
     run,
   });
   if (["blocked", "failed", "finalized"].includes(run.state?.status)) {
-    state.formationJobId = null;
+    setFormationJobId(null);
     updateFormationState();
     setRunning(false);
   }
@@ -1988,6 +2103,12 @@ elements["draft-drop-zone"].addEventListener("drop", (event) => {
 window.addEventListener("resize", () => {
   if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
 });
+globalThis.document.addEventListener("visibilitychange", () => {
+  if (globalThis.document.hidden) pauseFormationStatusUpdates();
+  else resumeFormationStatusUpdates();
+});
+window.addEventListener("pageshow", resumeFormationStatusUpdates);
+window.addEventListener("focus", resumeFormationStatusUpdates);
 
 renderReviewers(null);
-initializeTargetSession().catch(console.error);
+initializeTargetSession().then(restoreFormationJob).catch(console.error);

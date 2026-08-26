@@ -629,11 +629,8 @@ export function createUiWorkflowApi({
     sendJson(response, securityHeaders, 202, { jobId, caseId, status: job.status });
   }
 
-  async function sendJob(response, jobId) {
-    requireSafeId(jobId, "jobId");
-    const job = jobs.get(jobId);
-    if (!job) throw new HttpError(404, "Задание не найдено в текущей сессии сервера.");
-    sendJson(response, securityHeaders, 200, {
+  async function jobSummary(job) {
+    return {
       jobId: job.jobId,
       caseId: job.caseId,
       status: job.status,
@@ -642,6 +639,20 @@ export function createUiWorkflowApi({
       run: job.runDirectory && await exists(path.join(job.runDirectory, "state.json"))
         ? await readRunSummary(job.runDirectory)
         : null,
+    };
+  }
+
+  async function sendJob(response, jobId) {
+    requireSafeId(jobId, "jobId");
+    const job = jobs.get(jobId);
+    if (!job) throw new HttpError(404, "Задание не найдено в текущей сессии сервера.");
+    sendJson(response, securityHeaders, 200, await jobSummary(job));
+  }
+
+  async function sendActiveJob(response) {
+    const activeJob = [...jobs.values()].reverse().find((job) => job.status === "running");
+    sendJson(response, securityHeaders, 200, {
+      job: activeJob ? await jobSummary(activeJob) : null,
     });
   }
 
@@ -814,6 +825,15 @@ export function createUiWorkflowApi({
         && request.method === "POST"
       ) {
         await startRun(response, segments[3]);
+        return true;
+      }
+      if (
+        segments.length === 4
+        && segments[2] === "jobs"
+        && segments[3] === "active"
+        && request.method === "GET"
+      ) {
+        await sendActiveJob(response);
         return true;
       }
       if (segments.length === 4 && segments[2] === "jobs" && request.method === "GET") {

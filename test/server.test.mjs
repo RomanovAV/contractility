@@ -138,6 +138,14 @@ test("workflow API protects mutations and prepares a verified local case", async
       retainAgentTranscripts: false,
     },
   }, null, 2)}\n`);
+  let releaseRun;
+  const runMayFinish = new Promise((resolve) => {
+    releaseRun = resolve;
+  });
+  let observeServerCompletion;
+  const serverCompletionObserved = new Promise((resolve) => {
+    observeServerCompletion = resolve;
+  });
   const fakeRunTarget = async ({ config, onRunCreated }) => {
     const runId = "run-ui-integration";
     const runDirectory = path.join(config.storage.runRoot, runId);
@@ -210,6 +218,8 @@ test("workflow API protects mutations and prepares a verified local case", async
       })}\n`,
     );
     await onRunCreated({ runId, runDirectory });
+    await runMayFinish;
+    setTimeout(observeServerCompletion, 0);
     return { runId, runDirectory, state };
   };
   const server = await startServer({
@@ -369,17 +379,24 @@ test("workflow API protects mutations and prepares a verified local case", async
   assert.equal(runResponse.status, 202);
   const started = await runResponse.json();
 
-  let job;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const jobResponse = await fetch(
-      `${origin}/api/workflow/jobs/${started.jobId}`,
-      { headers: { "X-Contractility-Token": session.token } },
-    );
-    assert.equal(jobResponse.status, 200);
-    job = await jobResponse.json();
-    if (job.status !== "running") break;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+  const activeJobResponse = await fetch(`${origin}/api/workflow/jobs/active`, {
+    headers: { "X-Contractility-Token": session.token },
+  });
+  releaseRun();
+  assert.equal(activeJobResponse.status, 200);
+  const activeJob = (await activeJobResponse.json()).job;
+  assert.equal(activeJob.jobId, started.jobId);
+  assert.equal(activeJob.status, "running");
+
+  // Browser polling is not the execution driver: let the server-side task
+  // finish while no status requests are being made, then read the result once.
+  await serverCompletionObserved;
+  const jobResponse = await fetch(
+    `${origin}/api/workflow/jobs/${started.jobId}`,
+    { headers: { "X-Contractility-Token": session.token } },
+  );
+  assert.equal(jobResponse.status, 200);
+  const job = await jobResponse.json();
   assert.equal(job.status, "completed");
   assert.equal(job.run.state.status, "awaiting-human-approval");
   assert.equal(job.run.reviews.length, 1);
