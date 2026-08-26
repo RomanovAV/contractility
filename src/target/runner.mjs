@@ -48,7 +48,10 @@ import {
   verifyEvidenceWorkspace,
 } from "./evidence.mjs";
 import { createAgentStatusStore } from "./agent-status.mjs";
-import { validateReconstructionScope } from "./scope.mjs";
+import {
+  HUMAN_REQUIRED_MARKER,
+  validateReconstructionScope,
+} from "./scope.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -136,7 +139,7 @@ function formationPolicy() {
     allowSemanticEditsInEditableOoxmlParts: true,
     requiredCoverage: "all-changes-declared-by-proposed-agreement",
     placeholderPolicy: "resolve-or-preserve-empty-and-mark-human-required",
-    unresolvedFieldMarker: "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+    unresolvedFieldMarker: HUMAN_REQUIRED_MARKER,
     allowUnresolvedFields: true,
     allowUnresolvedTemplateFields: true,
     requireEvidenceForEveryChange: true,
@@ -177,18 +180,36 @@ async function requireChangeArtifacts(roundDirectory) {
   if (!Array.isArray(register.unresolvedFields)) {
     throw new Error("change-register.json должен содержать массив unresolvedFields.");
   }
+  let normalizedMarkerCount = 0;
+  const unresolvedFields = register.unresolvedFields.map((field, index) => {
+    if (!field || typeof field !== "object" || Array.isArray(field)) {
+      throw new Error(`change-register.json unresolvedFields[${index}] должен быть объектом.`);
+    }
+    if (field.marker === HUMAN_REQUIRED_MARKER) return field;
+    normalizedMarkerCount += 1;
+    return { ...field, marker: HUMAN_REQUIRED_MARKER };
+  });
+  if (normalizedMarkerCount > 0) {
+    await atomicWriteJson(changeRegister, { ...register, unresolvedFields });
+  }
   const plan = await readJson(changePlan);
   if (!Array.isArray(plan.operations)) {
     throw new Error("change-plan.json должен содержать массив operations.");
   }
-  return { changeRegister, changePlan };
+  return { changeRegister, changePlan, normalizedMarkerCount };
 }
 
 async function requireProducerArtifacts(roundDirectory) {
   const { currentContract, reconstructionScope } =
     await requireReconstructionArtifacts(roundDirectory);
-  const { changeRegister, changePlan } = await requireChangeArtifacts(roundDirectory);
-  return { currentContract, reconstructionScope, changeRegister, changePlan };
+  const changeArtifacts = await requireChangeArtifacts(roundDirectory);
+  return {
+    currentContract,
+    reconstructionScope,
+    changeRegister: changeArtifacts.changeRegister,
+    changePlan: changeArtifacts.changePlan,
+    normalizedMarkerCount: changeArtifacts.normalizedMarkerCount,
+  };
 }
 
 function isProducerStatus(value) {
@@ -684,7 +705,7 @@ async function validateCandidate(roundDirectory, referenceInventory) {
     path.join(roundDirectory, "artifacts/change-register.json"),
   );
   const unresolvedFields = register?.unresolvedFields;
-  const unresolvedFieldMarker = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
+  const unresolvedFieldMarker = HUMAN_REQUIRED_MARKER;
   if (!Array.isArray(unresolvedFields)) {
     throw new Error("change-register.json должен содержать массив unresolvedFields.");
   }
@@ -1203,7 +1224,17 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           evidenceManifestSha256,
         );
       },
-      validateArtifacts: () => requireChangeArtifacts(firstRoundDirectory),
+      validateArtifacts: async () => {
+        const artifacts = await requireChangeArtifacts(firstRoundDirectory);
+        if (artifacts.normalizedMarkerCount > 0) {
+          await appendEvent(runDirectory, "artifact.normalized", {
+            owner: "producer-plan",
+            field: "change-register.json.unresolvedFields[].marker",
+            count: artifacts.normalizedMarkerCount,
+          });
+        }
+        return artifacts;
+      },
     });
     if (planning.blocked) {
       state = await writeState(runDirectory, {
@@ -1248,7 +1279,14 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         );
       },
       validateArtifacts: async () => {
-        await requireProducerArtifacts(firstRoundDirectory);
+        const artifacts = await requireProducerArtifacts(firstRoundDirectory);
+        if (artifacts.normalizedMarkerCount > 0) {
+          await appendEvent(runDirectory, "artifact.normalized", {
+            owner: "producer-apply",
+            field: "change-register.json.unresolvedFields[].marker",
+            count: artifacts.normalizedMarkerCount,
+          });
+        }
         return validateCandidate(firstRoundDirectory, referenceInventory);
       },
     });
@@ -1361,7 +1399,14 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           );
         },
         validateArtifacts: async (synthesisResult) => {
-          await requireProducerArtifacts(roundDirectory);
+          const artifacts = await requireProducerArtifacts(roundDirectory);
+          if (artifacts.normalizedMarkerCount > 0) {
+            await appendEvent(runDirectory, "artifact.normalized", {
+              owner: `synthesis:${round}`,
+              field: "change-register.json.unresolvedFields[].marker",
+              count: artifacts.normalizedMarkerCount,
+            });
+          }
           if (synthesisResult.status === "done") {
             const currentInventory = await packageInventory(
               path.join(roundDirectory, "package"),

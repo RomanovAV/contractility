@@ -228,13 +228,18 @@ if (model === "missing-model") {
       page: 1,
       marker: humanRequiredMarker,
     }]
-    : mode.includes("missing-unresolved-marker")
+    : (
+      mode.includes("missing-unresolved-marker")
+      || mode.includes("wrong-unresolved-marker")
+    )
     ? ["Поле шаблона 1", "Поле шаблона 2"].map((target) => ({
       target,
       reason: "Значение отсутствует в доказательствах.",
       sourceDocumentId: "document-1",
       page: 1,
-      marker: humanRequiredMarker,
+      marker: mode.includes("wrong-unresolved-marker")
+        ? "ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ"
+        : humanRequiredMarker,
     }))
     : [];
   await writeFile(
@@ -268,8 +273,13 @@ if (model === "missing-model") {
     );
   }
   if (
-    mode.includes("missing-unresolved-marker")
-    && prompt.includes("Recovery after invalid apply artifacts")
+    (
+      mode.includes("wrong-unresolved-marker")
+      || (
+        mode.includes("missing-unresolved-marker")
+        && prompt.includes("Recovery after invalid apply artifacts")
+      )
+    )
   ) {
     const documentPath = path.join(process.cwd(), "package/word/document.xml");
     const xml = await readFile(documentPath, "utf8");

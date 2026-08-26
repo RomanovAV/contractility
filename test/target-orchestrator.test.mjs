@@ -1120,6 +1120,44 @@ test("producer repairs missing visible markers before candidate review", async (
   }
 });
 
+test("orchestrator canonicalizes unresolved marker metadata before apply", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-marker-policy-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE = "wrong-unresolved-marker";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    const register = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/artifacts/change-register.json"),
+      "utf8",
+    ));
+    assert.ok(register.unresolvedFields.every(
+      (field) => field.marker === HUMAN_REQUIRED_MARKER,
+    ));
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(
+      events,
+      /"event":"artifact\.normalized".*"owner":"producer-plan".*"count":2/,
+    );
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.equal(agentStatuses.some((status) =>
+      status.session.startsWith("producer-apply-artifact-retry:")), false);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
 test("producer artifact recovery handles repeated structural validation failures", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-artifact-cycle-"));
