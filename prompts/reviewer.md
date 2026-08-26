@@ -1,6 +1,8 @@
 Phase: independent read-only review.
 
 The current working directory is the complete workspace for this round.
+It is an isolated disposable copy made specifically for this reviewer attempt;
+the canonical round workspace is outside it and must never be accessed.
 Reviewer id, focus, and all relative paths are in the review-task file named
 at the end of this prompt.
 The immutable candidate hash, OCR evidence manifest, reconstructed contract,

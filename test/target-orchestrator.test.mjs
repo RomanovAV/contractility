@@ -1158,6 +1158,40 @@ test("orchestrator canonicalizes unresolved marker metadata before apply", async
   }
 });
 
+test("reviewer mutations stay inside disposable read-only sandboxes", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-review-sandbox-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE = "reviewer-mutates-workspace";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    const finalXml = await readFile(
+      path.join(run.runDirectory, "rounds/01/package/word/document.xml"),
+      "utf8",
+    );
+    assert.doesNotMatch(finalXml, /недопустимая правка reviewer-а/);
+    const candidateSha256 = sha256(await readFile(
+      path.join(run.runDirectory, "rounds/01/candidate.docx"),
+    ));
+    assert.equal(candidateSha256, run.state.candidateSha256);
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(
+      events,
+      /"event":"review\.sandbox-mutated".*"reviewerId":"legal-a".*"action":"discarded"/,
+    );
+    assert.deepEqual(
+      await readdir(path.join(run.runDirectory, "rounds/01/.read-only-sandboxes")),
+      [],
+    );
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
 test("producer artifact recovery handles repeated structural validation failures", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-artifact-cycle-"));
@@ -1226,7 +1260,8 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-cycle-"));
   const prepared = await prepareSimpleCase(temporary);
   process.env.FAKE_GIGACODE_MODE =
-    "fix-once-synthesis-format-retry-synthesis-writes-consensus";
+    "fix-once-synthesis-format-retry-synthesis-writes-consensus-"
+    + "synthesis-read-only-mutates-workspace";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -1240,6 +1275,7 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
     );
     assert.match(finalXml, /исправлено/);
     assert.equal(finalXml.match(/исправлено/g)?.length, 1);
+    assert.doesNotMatch(finalXml, /недопустимая правка read-only арбитра/);
     const consensus = JSON.parse(await readFile(
       path.join(run.runDirectory, "rounds/02/consensus.json"),
       "utf8",
@@ -1268,6 +1304,11 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
       status.session === "synthesis-format:1:1"
       && status.role === "synthesizer-format"
       && status.status === "completed"));
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(
+      events,
+      /"event":"synthesis\.sandbox-mutated".*"session":"synthesis-format:1:1"/,
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

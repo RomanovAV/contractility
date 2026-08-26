@@ -316,6 +316,17 @@ if (model === "missing-model") {
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
   await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
   await readFile(path.join(process.cwd(), task.paths.reconstructionScope), "utf8");
+  if (mode.includes("reviewer-mutates-workspace") && model === "review-model-a") {
+    const documentPath = path.join(process.cwd(), "package/word/document.xml");
+    const xml = await readFile(documentPath, "utf8");
+    await writeFile(
+      documentPath,
+      xml.replace(
+        "Тестовое дополнительное соглашение",
+        "Тестовое дополнительное соглашение — недопустимая правка reviewer-а",
+      ),
+    );
+  }
   if (mode.includes("slow-review") && model === "review-model-c") {
     await delay(1000);
   }
@@ -382,6 +393,14 @@ if (model === "missing-model") {
     await writeFile(
       path.join(process.cwd(), "consensus.json"),
       `${JSON.stringify({ status: "unvalidated-model-file" })}\n`,
+    );
+  }
+  if (mode.includes("synthesis-read-only-mutates-workspace")) {
+    const documentPath = path.join(process.cwd(), "package/word/document.xml");
+    const xml = await readFile(documentPath, "utf8");
+    await writeFile(
+      documentPath,
+      xml.replace("исправлено", "исправлено — недопустимая правка read-only арбитра"),
     );
   }
   if (mode.includes("synthesis-format-always-invalid")) {

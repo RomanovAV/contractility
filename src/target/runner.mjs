@@ -741,6 +741,65 @@ async function validateCandidate(roundDirectory, referenceInventory) {
   };
 }
 
+async function createReadOnlySandbox({
+  roundDirectory,
+  taskPaths,
+  ownerId,
+  candidateSha256,
+}) {
+  const sandboxRoot = path.join(roundDirectory, ".read-only-sandboxes");
+  await ensurePrivateDirectory(sandboxRoot);
+  const sandboxDirectory = path.join(
+    sandboxRoot,
+    `${ownerId.replace(/[^a-zA-Z0-9-]+/g, "-")}-${randomBytes(6).toString("hex")}`,
+  );
+  await ensurePrivateDirectory(sandboxDirectory);
+  await Promise.all([
+    cp(path.join(roundDirectory, "package"), path.join(sandboxDirectory, "package"), {
+      recursive: true,
+    }),
+    cp(path.join(roundDirectory, "artifacts"), path.join(sandboxDirectory, "artifacts"), {
+      recursive: true,
+    }),
+    cp(path.join(roundDirectory, "evidence"), path.join(sandboxDirectory, "evidence"), {
+      recursive: true,
+    }),
+    copyFile(
+      path.join(roundDirectory, "candidate.docx"),
+      path.join(sandboxDirectory, "candidate.docx"),
+    ),
+    ...taskPaths.map((taskPath) => copyFile(
+      taskPath,
+      path.join(sandboxDirectory, path.basename(taskPath)),
+    )),
+  ]);
+  const inventory = await packageInventory(path.join(sandboxDirectory, "package"));
+  const fingerprint = await workspaceFingerprint(sandboxDirectory, inventory);
+  const copiedCandidateSha256 = await sha256File(
+    path.join(sandboxDirectory, "candidate.docx"),
+  );
+  if (copiedCandidateSha256 !== candidateSha256) {
+    await rm(sandboxDirectory, { recursive: true, force: true });
+    throw new Error(`Не удалось изолировать кандидат для read-only агента ${ownerId}.`);
+  }
+  return {
+    directory: sandboxDirectory,
+    fingerprint,
+    candidateSha256: copiedCandidateSha256,
+  };
+}
+
+async function readOnlySandboxWasMutated(sandbox) {
+  try {
+    const inventory = await packageInventory(path.join(sandbox.directory, "package"));
+    return await workspaceFingerprint(sandbox.directory, inventory) !== sandbox.fingerprint
+      || await sha256File(path.join(sandbox.directory, "candidate.docx"))
+        !== sandbox.candidateSha256;
+  } catch {
+    return true;
+  }
+}
+
 async function runReviewer({
   reviewer,
   round,
@@ -775,15 +834,36 @@ async function runReviewer({
   };
   const reviewTaskPath = path.join(roundDirectory, `review-task-${reviewer.id}.json`);
   await atomicWriteJson(reviewTaskPath, task);
+  const runReviewerModel = async (options) => {
+    const sandbox = await createReadOnlySandbox({
+      roundDirectory,
+      taskPaths: [reviewTaskPath],
+      ownerId: `reviewer-${reviewer.id}`,
+      candidateSha256: candidate.candidateSha256,
+    });
+    try {
+      return await runGigacode({ ...options, cwd: sandbox.directory });
+    } finally {
+      const mutated = await readOnlySandboxWasMutated(sandbox);
+      if (mutated) {
+        await appendEvent(runDirectory, "review.sandbox-mutated", {
+          round,
+          reviewerId: reviewer.id,
+          session: options.session,
+          action: "discarded",
+        }).catch(() => {});
+      }
+      await rm(sandbox.directory, { recursive: true, force: true });
+    }
+  };
   const basePrompt = await loadPrompt("reviewer.md");
   const reviewTaskName = `review-task-${reviewer.id}.json`;
   const promptPrefix = `${basePrompt.trim()}\n\nReview task: ${reviewTaskName}`;
   const prompt = `${promptPrefix}\n\n${reviewOutputContract()}`;
-  let result = await runGigacode({
+  let result = await runReviewerModel({
     config: executorConfig(config),
     model: reviewer.model,
     prompt,
-    cwd: roundDirectory,
     session: `review:${round}:${reviewer.id}`,
     onEvent: onGigacodeEvent,
     transcriptDirectory: transcriptDirectory(config, runDirectory),
@@ -805,11 +885,10 @@ async function runReviewer({
     } catch (error) {
       lastError = error;
       if (attempt === config.review.formatRetries) break;
-      result = await runGigacode({
+      result = await runReviewerModel({
         config: executorConfig(config),
         model: reviewer.model,
         prompt: `${promptPrefix}\n\n${formatRetryPrompt(result.output, error)}`,
-        cwd: roundDirectory,
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
@@ -900,6 +979,30 @@ Untrusted findings: untrusted-findings.json`;
       await rm(consensusPath, { force: true });
     }
   };
+  const runReadOnlySynthesisModel = async (options) => {
+    const sandbox = await createReadOnlySandbox({
+      roundDirectory,
+      taskPaths: [
+        path.join(roundDirectory, "synthesis-task.json"),
+        findingsPath,
+      ],
+      ownerId: `synthesis-${round}`,
+      candidateSha256: candidate.candidateSha256,
+    });
+    try {
+      return await runGigacode({ ...options, cwd: sandbox.directory });
+    } finally {
+      const mutated = await readOnlySandboxWasMutated(sandbox);
+      if (mutated) {
+        await appendEvent(runDirectory, "synthesis.sandbox-mutated", {
+          round,
+          session: options.session,
+          action: "discarded",
+        }).catch(() => {});
+      }
+      await rm(sandbox.directory, { recursive: true, force: true });
+    }
+  };
   let result = await runSynthesisModel({
     config: executorConfig(config),
     model: config.models.synthesizer,
@@ -948,7 +1051,7 @@ Untrusted findings: untrusted-findings.json`;
           : `${attempt + 1}`;
         const retrySession = `synthesis-${retryKind}:${round}:${retryAttempt}`;
         synthesisSessions.push(retrySession);
-        currentResult = await runSynthesisModel({
+        currentResult = await runReadOnlySynthesisModel({
           config: executorConfig(config),
           model: config.models.synthesizer,
           prompt: formattingOnly
@@ -1378,8 +1481,16 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       );
       const afterReviewInventory = await packageInventory(path.join(roundDirectory, "package"));
       const afterReviewFingerprint = await workspaceFingerprint(roundDirectory, afterReviewInventory);
-      if (afterReviewFingerprint !== beforeReviewFingerprint) {
-        throw new Error("Read-only reviewer изменил кандидат или обязательные артефакты.");
+      const afterReviewCandidateSha256 = await sha256File(
+        path.join(roundDirectory, "candidate.docx"),
+      );
+      if (
+        afterReviewFingerprint !== beforeReviewFingerprint
+        || afterReviewCandidateSha256 !== candidate.candidateSha256
+      ) {
+        throw new Error(
+          "Нарушена изоляция reviewer: изменён канонический кандидат или обязательные артефакты.",
+        );
       }
       const findingsSha256 = findingFingerprint(reports);
       const consensus = await runSynthesis({
