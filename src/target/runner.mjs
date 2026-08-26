@@ -2,10 +2,12 @@ import { randomBytes } from "node:crypto";
 import {
   copyFile,
   cp,
+  mkdtemp,
   readFile,
   rm,
   stat,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyCase } from "./case-store.mjs";
@@ -747,11 +749,9 @@ async function createReadOnlySandbox({
   ownerId,
   candidateSha256,
 }) {
-  const sandboxRoot = path.join(roundDirectory, ".read-only-sandboxes");
-  await ensurePrivateDirectory(sandboxRoot);
-  const sandboxDirectory = path.join(
-    sandboxRoot,
-    `${ownerId.replace(/[^a-zA-Z0-9-]+/g, "-")}-${randomBytes(6).toString("hex")}`,
+  const safeOwnerId = ownerId.replace(/[^a-zA-Z0-9-]+/g, "-");
+  const sandboxDirectory = await mkdtemp(
+    path.join(os.tmpdir(), `contractility-read-only-${safeOwnerId}-`),
   );
   await ensurePrivateDirectory(sandboxDirectory);
   await Promise.all([
@@ -856,6 +856,17 @@ async function runReviewer({
       await rm(sandbox.directory, { recursive: true, force: true });
     }
   };
+  const runReviewFormatModel = async (options) => {
+    const formatDirectory = await mkdtemp(path.join(
+      os.tmpdir(),
+      `contractility-review-format-${reviewer.id}-`,
+    ));
+    try {
+      return await runGigacode({ ...options, cwd: formatDirectory });
+    } finally {
+      await rm(formatDirectory, { recursive: true, force: true });
+    }
+  };
   const basePrompt = await loadPrompt("reviewer.md");
   const reviewTaskName = `review-task-${reviewer.id}.json`;
   const promptPrefix = `${basePrompt.trim()}\n\nReview task: ${reviewTaskName}`;
@@ -877,6 +888,8 @@ async function runReviewer({
   assertRequestedModel(result, reviewer.model);
   let report;
   let lastError;
+  let formatSourceOutput = null;
+  let formatSourceError = null;
   for (let attempt = 0; attempt <= config.review.formatRetries; attempt += 1) {
     try {
       report = parseReviewReport(result.output);
@@ -884,18 +897,21 @@ async function runReviewer({
       break;
     } catch (error) {
       lastError = error;
+      formatSourceOutput ??= result.output;
+      formatSourceError ??= error;
       if (attempt === config.review.formatRetries) break;
-      result = await runReviewerModel({
+      const formatModel = config.models.synthesizer;
+      result = await runReviewFormatModel({
         config: executorConfig(config),
-        model: reviewer.model,
-        prompt: `${promptPrefix}\n\n${formatRetryPrompt(result.output, error)}`,
+        model: formatModel,
+        prompt: formatRetryPrompt(formatSourceOutput, formatSourceError),
         session: `review-format:${round}:${reviewer.id}:${attempt + 1}`,
         onEvent: onGigacodeEvent,
         transcriptDirectory: transcriptDirectory(config, runDirectory),
         diagnosticDirectory: diagnosticDirectory(runDirectory),
       });
       if (!result.ok) break;
-      assertRequestedModel(result, reviewer.model);
+      assertRequestedModel(result, formatModel);
     }
   }
   if (lastError || !report) {

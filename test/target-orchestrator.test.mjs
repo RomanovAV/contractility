@@ -504,13 +504,15 @@ test("review parser supports exact non-paginated artifact findings", () => {
   );
 });
 
-test("review retry names the validation failure and requires re-verification", () => {
+test("review format retry only serializes the prior semantic report", () => {
   const prompt = formatRetryPrompt(
     "I've verified the candidate and saved JSON.",
     new TypeError("finding.page должен быть положительным целым числом."),
   );
   assert.match(prompt, /<UNTRUSTED_VALIDATION_ERROR>\s+finding\.page/);
-  assert.match(prompt, /Perform the assigned review again/);
+  assert.match(prompt, /formatting-only recovery/i);
+  assert.match(prompt, /Do not repeat the review, inspect the workspace/i);
+  assert.match(prompt, /Preserve every concrete finding/);
   assert.match(prompt, /Do not infer a\s+pass verdict/);
   assert.match(prompt, /entire final assistant response must be exactly one JSON object/);
 });
@@ -1182,10 +1184,6 @@ test("reviewer mutations stay inside disposable read-only sandboxes", async () =
     assert.match(
       events,
       /"event":"review\.sandbox-mutated".*"reviewerId":"legal-a".*"action":"discarded"/,
-    );
-    assert.deepEqual(
-      await readdir(path.join(run.runDirectory, "rounds/01/.read-only-sandboxes")),
-      [],
     );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;

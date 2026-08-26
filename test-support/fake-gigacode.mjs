@@ -311,6 +311,8 @@ if (model === "missing-model") {
   } else {
     emit({ status: "candidate-ready" });
   }
+} else if (prompt.includes("formatting-only recovery for a review report")) {
+  emit({ verdict: "pass", findings: [] });
 } else if (prompt.includes("independent read-only review")) {
   const taskName = prompt.match(/Review task: ([^\s]+)/)?.[1];
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
