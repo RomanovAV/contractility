@@ -428,7 +428,15 @@ if (model === "missing-model") {
       `${JSON.stringify({ status: "unvalidated-model-file" })}\n`,
     );
   }
-  if (mode.includes("fix-once") && task.findingIds.length > 0) {
+  if (mode.includes("synthesis-blocked") && task.findingIds.length > 0) {
+    emit({
+      status: "blocked",
+      acceptedFindingIds: [],
+      rejectedFindingIds: [],
+      unresolvedFindingIds: task.findingIds,
+      summary: "Тестовое замечание требует решения человека.",
+    });
+  } else if (mode.includes("fix-once") && task.findingIds.length > 0) {
     const documentPath = path.join(roundDirectory, "package/word/document.xml");
     let xml = await readFile(documentPath, "utf8");
     if (mode.includes("synthesis-invalid-artifact")) {

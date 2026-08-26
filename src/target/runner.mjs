@@ -1423,6 +1423,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       status: "candidate-created",
       round: 1,
       candidateSha256: candidate.candidateSha256,
+      candidatePath: path.relative(runDirectory, candidate.candidatePath),
     });
 
     let stallCount = 0;
@@ -1444,6 +1445,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         status: "reviewing",
         round,
         candidateSha256: candidate.candidateSha256,
+        candidatePath: path.relative(runDirectory, candidate.candidatePath),
       });
       const beforeReviewFingerprint = candidate.workspaceFingerprint;
       const reviewDirectory = path.join(roundDirectory, "reviews");
@@ -1598,6 +1600,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         status: "fixing",
         round,
         candidateSha256: candidate.candidateSha256,
+        candidatePath: path.relative(runDirectory, candidate.candidatePath),
         findingsSha256,
       });
     }

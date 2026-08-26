@@ -1621,7 +1621,11 @@ function renderFormationRun(job) {
   const awaitingApproval = status === "awaiting-human-approval";
   const approved = status === "approved";
   const finalized = status === "finalized";
-  const candidateReady = awaitingApproval || approved || finalized;
+  const candidateReady = Boolean(
+    runState?.candidateSha256
+    && Number.isInteger(runState?.round)
+    && runState.round > 0,
+  );
   elements["download-diagnostics"].disabled = !state.formationRunId;
   elements["download-candidate"].disabled = !candidateReady;
   elements["approver-name"].disabled = !awaitingApproval;
@@ -1633,7 +1637,13 @@ function renderFormationRun(job) {
   if (job.status === "failed" || status === "failed") {
     setRunStatus("Ошибка", job.error ?? runState?.error ?? "Запуск завершился с ошибкой.", "failed");
   } else if (status === "blocked") {
-    setRunStatus("Требуется решение", runState.blocker ?? "Автоматический контур остановлен.", "failed");
+    setRunStatus(
+      "Требуется решение",
+      candidateReady
+        ? "Автоматический контур остановлен, но кандидат доступен для скачивания и ручной проверки."
+        : runState.blocker ?? "Автоматический контур остановлен до создания кандидата.",
+      "failed",
+    );
   } else if (awaitingApproval) {
     setRunStatus(
       "Нужна проверка",
@@ -1722,7 +1732,19 @@ async function restoreFormationJob() {
     const active = await workflowJson("/jobs/active");
     job = active.job;
   }
-  if (!job) return;
+  if (!job) {
+    const latest = await workflowJson("/runs/latest");
+    if (!latest.runId || !latest.run) return;
+    state.formationBusy = false;
+    renderFormationRun({
+      status: "completed",
+      runId: latest.runId,
+      run: latest.run,
+    });
+    updateFormationState();
+    setRunning(false);
+    return;
+  }
   setFormationJobId(job.jobId);
   state.formationBusy = job.status === "running";
   renderFormationRun(job);

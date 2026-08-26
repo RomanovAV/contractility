@@ -17,6 +17,7 @@ import {
   atomicWriteJson,
   ensurePrivateDirectory,
   readJson,
+  sha256File,
 } from "./target/fs-utils.mjs";
 import {
   approveRun,
@@ -661,6 +662,33 @@ export function createUiWorkflowApi({
     sendJson(response, securityHeaders, 200, await readRunSummary(runDirectory));
   }
 
+  async function sendLatestRun(response) {
+    const config = await loadTargetConfig(targetConfigPath);
+    let names = [];
+    try {
+      names = (await readdir(config.storage.runRoot))
+        .filter((name) => /^run-[a-zA-Z0-9-]+$/.test(name))
+        .sort()
+        .reverse();
+    } catch {
+      // The run root is created lazily by the first run.
+    }
+    for (const runId of names) {
+      const runDirectory = safeJoin(config.storage.runRoot, runId);
+      if (!(await exists(path.join(runDirectory, "state.json")))) continue;
+      try {
+        sendJson(response, securityHeaders, 200, {
+          runId,
+          run: await readRunSummary(runDirectory),
+        });
+        return;
+      } catch {
+        // Skip an incomplete run and continue to the previous persisted one.
+      }
+    }
+    sendJson(response, securityHeaders, 200, { runId: null, run: null });
+  }
+
   async function approve(response, runId, request) {
     const { runDirectory } = await requireRunDirectory(runId);
     const body = await readJsonBody(request, 64 * 1024);
@@ -686,9 +714,24 @@ export function createUiWorkflowApi({
     const { config, runDirectory } = await requireRunDirectory(runId);
     const state = await readJson(path.join(runDirectory, "state.json"));
     if (kind === "candidate") {
-      if (!state.candidatePath) throw new HttpError(409, "Кандидат ещё не готов.");
+      const fallbackCandidatePath = Number.isInteger(state.round) && state.round > 0
+        ? `rounds/${String(state.round).padStart(2, "0")}/candidate.docx`
+        : null;
+      const candidateRelativePath = state.candidatePath
+        ?? (state.candidateSha256 ? fallbackCandidatePath : null);
+      if (!candidateRelativePath) throw new HttpError(409, "Кандидат ещё не готов.");
+      const candidateFilePath = safeJoin(runDirectory, candidateRelativePath);
+      if (!(await exists(candidateFilePath))) {
+        throw new HttpError(409, "Файл кандидата не найден.");
+      }
+      if (
+        state.candidateSha256
+        && await sha256File(candidateFilePath) !== state.candidateSha256
+      ) {
+        throw new HttpError(409, "SHA-256 кандидата не совпадает с состоянием запуска.");
+      }
       return {
-        filePath: safeJoin(runDirectory, state.candidatePath),
+        filePath: candidateFilePath,
         contentType:
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         downloadName: "candidate-additional-agreement.docx",
@@ -838,6 +881,15 @@ export function createUiWorkflowApi({
       }
       if (segments.length === 4 && segments[2] === "jobs" && request.method === "GET") {
         await sendJob(response, segments[3]);
+        return true;
+      }
+      if (
+        segments.length === 4
+        && segments[2] === "runs"
+        && segments[3] === "latest"
+        && request.method === "GET"
+      ) {
+        await sendLatestRun(response);
         return true;
       }
       if (segments[2] === "runs" && segments.length >= 4) {

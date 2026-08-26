@@ -1190,6 +1190,27 @@ test("reviewer mutations stay inside disposable read-only sandboxes", async () =
   }
 });
 
+test("blocked review state retains a downloadable verified candidate", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-blocked-candidate-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE = "fix-once-synthesis-blocked";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "blocked");
+    assert.equal(run.state.candidatePath, "rounds/01/candidate.docx");
+    assert.equal(
+      sha256(await readFile(path.join(run.runDirectory, run.state.candidatePath))),
+      run.state.candidateSha256,
+    );
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
 test("producer artifact recovery handles repeated structural validation failures", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-artifact-cycle-"));

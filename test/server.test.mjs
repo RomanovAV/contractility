@@ -421,6 +421,38 @@ test("workflow API protects mutations and prepares a verified local case", async
     Buffer.from("candidate docx"),
   );
 
+  const runStatePath = path.join(
+    dataRoot,
+    "runs",
+    job.runId,
+    "state.json",
+  );
+  const readyState = JSON.parse(await readFile(runStatePath, "utf8"));
+  const legacyBlockedState = {
+    ...readyState,
+    status: "blocked",
+    blocker: "Требуется решение человека.",
+  };
+  delete legacyBlockedState.candidatePath;
+  await writeFile(runStatePath, `${JSON.stringify(legacyBlockedState, null, 2)}\n`);
+  const latestRunResponse = await fetch(`${origin}/api/workflow/runs/latest`, {
+    headers: { "X-Contractility-Token": session.token },
+  });
+  assert.equal(latestRunResponse.status, 200);
+  const latestRun = await latestRunResponse.json();
+  assert.equal(latestRun.runId, job.runId);
+  assert.equal(latestRun.run.state.status, "blocked");
+  const blockedCandidateResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/files/candidate`,
+    { headers: { "X-Contractility-Token": session.token } },
+  );
+  assert.equal(blockedCandidateResponse.status, 200);
+  assert.deepEqual(
+    Buffer.from(await blockedCandidateResponse.arrayBuffer()),
+    Buffer.from("candidate docx"),
+  );
+  await writeFile(runStatePath, `${JSON.stringify(readyState, null, 2)}\n`);
+
   const ticketResponse = await fetch(
     `${origin}/api/workflow/runs/${job.runId}/download-ticket`,
     {
