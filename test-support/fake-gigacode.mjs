@@ -273,13 +273,17 @@ if (model === "missing-model") {
   ) {
     const documentPath = path.join(process.cwd(), "package/word/document.xml");
     const xml = await readFile(documentPath, "utf8");
+    const updated = xml.replace(
+      "Тестовое дополнительное соглашение",
+      `Тестовое дополнительное соглашение — ${humanRequiredMarker}; `
+        + humanRequiredMarker,
+    );
     await writeFile(
       documentPath,
-      xml.replace(
-        "Тестовое дополнительное соглашение",
-        `Тестовое дополнительное соглашение — ${humanRequiredMarker}; `
-          + humanRequiredMarker,
-      ),
+      updated
+        .replaceAll("<w:", "<ns0:")
+        .replaceAll("</w:", "</ns0:")
+        .replace("xmlns:w=", "xmlns:ns0="),
     );
   }
   if (mode.includes("producer-cancel")) {

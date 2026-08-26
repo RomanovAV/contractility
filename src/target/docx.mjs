@@ -28,6 +28,10 @@ const EDITABLE_PARTS = [
   /^word\/header\d+\.xml$/,
   /^word\/footer\d+\.xml$/,
 ];
+const WORDPROCESSING_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
 
 async function run(command, args, options = {}) {
   try {
@@ -169,8 +173,18 @@ export async function packageInventory(packageDirectory) {
 }
 
 function visibleWordText(xml) {
-  return [...xml.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)]
-    .map((match) => match[1]
+  const wordPrefixes = new Set();
+  for (const match of xml.matchAll(
+    /\bxmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(["'])(.*?)\2/g,
+  )) {
+    if (WORDPROCESSING_NAMESPACES.has(match[3])) {
+      wordPrefixes.add(match[1] ?? "");
+    }
+  }
+  const wordTextPattern = /<(?:([A-Za-z_][\w.-]*):)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t>/g;
+  return [...xml.matchAll(wordTextPattern)]
+    .filter((match) => wordPrefixes.has(match[1] ?? ""))
+    .map((match) => match[2]
       .replaceAll("&lt;", "<")
       .replaceAll("&gt;", ">")
       .replaceAll("&quot;", "\"")

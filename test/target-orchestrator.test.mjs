@@ -1101,6 +1101,7 @@ test("producer repairs missing visible markers before candidate review", async (
       path.join(run.runDirectory, "rounds/01/package/word/document.xml"),
       "utf8",
     );
+    assert.match(finalXml, /<ns0:document/);
     assert.equal(finalXml.match(/ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ/g)?.length, 2);
     const agentStatuses = await Promise.all(
       (await readdir(path.join(run.runDirectory, "agent-status")))
