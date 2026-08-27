@@ -31,6 +31,15 @@ The candidate is an additional agreement based on the proposed DOCX template.
 Do not require its structure, numbering, terminology system, or layout to match
 the reconstructed contract or historical amendments. Review semantic coverage
 of all declared changes and preservation of the proposed DOCX layout.
+Use `ooxmlMarkupFacts` from the trusted review task when discussing revision
+markup. Word Track Changes exist only when the package contains actual
+WordprocessingML revision elements such as `w:ins`, `w:del`, `w:moveFrom`, or
+`w:moveTo` (including their revision-range/property variants). Ordinary run
+formatting such as `w:highlight`, `w:shd`, `w:color`, `w:lang`, or `w:rFonts`
+is not Track Changes. Never call highlighting a tracked-change artifact.
+Do not report existing highlighting or other template styling as a defect or
+style preference. Report formatting only when you can demonstrate a concrete
+corruption relative to the proposed template or a usability/security defect.
 For a missing or distorted declared change, cite its locator in the proposed
 agreement and the candidate locator in `target`. Cite a signed document and page
 when the finding concerns the reconstructed baseline, chronology, or a claim

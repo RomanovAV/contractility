@@ -19,6 +19,7 @@ import {
   packDocx,
   packageInventory,
   validateExtractedPackage,
+  wordprocessingMarkupFacts,
 } from "./docx.mjs";
 import {
   acquireRunLock,
@@ -138,6 +139,17 @@ function formationPolicy() {
     historicalDocumentFormats: "arbitrary",
     requireStructuralSimilarityToCurrentContract: false,
     preserveProposedAgreementLayout: true,
+    trackChangesEvidence:
+      "actual-WordprocessingML-revision-elements-only",
+    ordinaryFormattingIsNotTrackChanges: [
+      "w:highlight",
+      "w:shd",
+      "w:color",
+      "w:lang",
+      "w:rFonts",
+    ],
+    formattingFindingPolicy:
+      "require-a-concrete-defect-against-the-proposed-template-not-a-style-preference",
     allowSemanticEditsInEditableOoxmlParts: true,
     requiredCoverage: "all-changes-declared-by-proposed-agreement",
     placeholderPolicy: "resolve-or-preserve-empty-and-mark-human-required",
@@ -739,8 +751,28 @@ async function validateCandidate(roundDirectory, referenceInventory) {
     candidatePath,
     candidateSha256,
     inventory,
+    ooxmlMarkupFacts: await wordprocessingMarkupFacts(packageDirectory),
     workspaceFingerprint: await workspaceFingerprint(roundDirectory, inventory),
   };
+}
+
+const TRACK_CHANGES_CLAIM = /(?:track(?:ed)?[- ]changes?|change tracking|tracked revision|отслеживан\S*\s+изменен\S*|режим\S*\s+исправлен\S*)/iu;
+const ORDINARY_FORMATTING_CLAIM = /(?:^|\W)(?:(?:w|ns\d*):)?(?:highlight|shd|color|lang|rFonts)(?:\W|$)/iu;
+
+function unsupportedOoxmlFindingReason(finding, ooxmlMarkupFacts) {
+  if (ooxmlMarkupFacts?.revisionMarkup?.count !== 0) return null;
+  const claim = [
+    finding.target,
+    finding.evidence,
+    finding.observed,
+    finding.impact,
+    finding.proposedAction,
+  ].filter(Boolean).join("\n");
+  if (!TRACK_CHANGES_CLAIM.test(claim) || !ORDINARY_FORMATTING_CLAIM.test(claim)) {
+    return null;
+  }
+  return "Кандидат не содержит элементов WordprocessingML Track Changes; "
+    + "указанный элемент является обычным форматированием текста.";
 }
 
 async function createReadOnlySandbox({
@@ -820,6 +852,7 @@ async function runReviewer({
       focus: reviewer.focus,
     },
     policy: formationPolicy(),
+    ooxmlMarkupFacts: candidate.ooxmlMarkupFacts,
     evidenceManifestSha256,
     paths: {
       evidenceManifest: "evidence/manifest.json",
@@ -917,6 +950,29 @@ async function runReviewer({
   if (lastError || !report) {
     throw new Error(`Reviewer ${reviewer.id} нарушил формат: ${lastError?.message ?? result.stderr}`);
   }
+  const dismissedFindings = report.findings
+    .map((finding) => ({
+      finding,
+      reason: unsupportedOoxmlFindingReason(finding, candidate.ooxmlMarkupFacts),
+    }))
+    .filter((item) => item.reason);
+  if (dismissedFindings.length > 0) {
+    const dismissedIds = new Set(dismissedFindings.map((item) => item.finding.id));
+    report = {
+      verdict: report.findings.length === dismissedFindings.length
+        ? "pass"
+        : "changes-required",
+      findings: report.findings.filter((finding) => !dismissedIds.has(finding.id)),
+    };
+    for (const dismissed of dismissedFindings) {
+      await appendEvent(runDirectory, "review.finding-dismissed", {
+        round,
+        reviewerId: reviewer.id,
+        findingId: dismissed.finding.id,
+        reason: dismissed.reason,
+      });
+    }
+  }
   await verifyEvidenceWorkspace(
     path.join(roundDirectory, "evidence"),
     evidenceManifestSha256,
@@ -933,6 +989,7 @@ async function runReviewer({
     },
     verdict: report.verdict,
     findings: report.findings,
+    dismissedFindings,
     execution: {
       sessionId: result.sessionId,
       durationMs: result.durationMs,
@@ -969,6 +1026,7 @@ async function runSynthesis({
     candidateSha256: candidate.candidateSha256,
     findingIds: [...findingMap.keys()],
     policy: formationPolicy(),
+    ooxmlMarkupFacts: candidate.ooxmlMarkupFacts,
     evidenceManifestSha256,
     paths: {
       evidenceManifest: "evidence/manifest.json",
@@ -987,12 +1045,34 @@ async function runSynthesis({
 Synthesis task: synthesis-task.json
 Untrusted findings: untrusted-findings.json`;
   const consensusPath = path.join(roundDirectory, "consensus.json");
+  const candidatePath = path.join(roundDirectory, "candidate.docx");
   const runSynthesisModel = async (options) => {
+    const baselineDirectory = await mkdtemp(
+      path.join(os.tmpdir(), `contractility-synthesis-candidate-${round}-`),
+    );
+    const baselineCandidatePath = path.join(baselineDirectory, "candidate.docx");
+    await copyFile(candidatePath, baselineCandidatePath);
+    const baselineCandidateSha256 = await sha256File(baselineCandidatePath);
     await rm(consensusPath, { force: true });
     try {
       return await runGigacode(options);
     } finally {
       await rm(consensusPath, { force: true });
+      let candidateWasModified = false;
+      try {
+        candidateWasModified = await sha256File(candidatePath) !== baselineCandidateSha256;
+      } catch {
+        candidateWasModified = true;
+      }
+      if (candidateWasModified) {
+        await copyFile(baselineCandidatePath, candidatePath);
+        await appendEvent(runDirectory, "synthesis.candidate-write-discarded", {
+          round,
+          session: options.session,
+          action: "restored-pre-synthesis-baseline",
+        }).catch(() => {});
+      }
+      await rm(baselineDirectory, { recursive: true, force: true });
     }
   };
   const runReadOnlySynthesisModel = async (options) => {

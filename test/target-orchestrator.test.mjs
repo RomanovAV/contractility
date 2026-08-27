@@ -67,7 +67,7 @@ async function waitFor(check, timeoutMs = 5000) {
   throw new Error(`Условие теста не выполнено за ${timeoutMs} мс.`);
 }
 
-async function createMinimalDocx(root) {
+async function createMinimalDocx(root, { greenHighlight = false } = {}) {
   const packageDirectory = path.join(root, "docx-package");
   await mkdir(path.join(packageDirectory, "_rels"), { recursive: true });
   await mkdir(path.join(packageDirectory, "word"), { recursive: true });
@@ -83,7 +83,7 @@ async function createMinimalDocx(root) {
 </Relationships>`);
   await writeFile(path.join(packageDirectory, "word/document.xml"), `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body><w:p><w:r><w:t>Тестовое дополнительное соглашение</w:t></w:r></w:p><w:sectPr/></w:body>
+  <w:body><w:p><w:r>${greenHighlight ? '<w:rPr><w:highlight w:val="green"/></w:rPr>' : ""}<w:t>Тестовое дополнительное соглашение</w:t></w:r></w:p><w:sectPr/></w:body>
 </w:document>`);
   const output = path.join(root, "draft.docx");
   await execFileAsync("zip", ["-q", "-X", "-r", output, "."], { cwd: packageDirectory });
@@ -121,14 +121,14 @@ function targetConfig(runRoot, { passEnvironment = [] } = {}) {
   };
 }
 
-async function prepareSimpleCase(temporary) {
+async function prepareSimpleCase(temporary, docxOptions = {}) {
   const contract = Buffer.from("%PDF-1.4\ncontract\n%%EOF\n");
   const amendment = Buffer.from("%PDF-1.4\namendment\n%%EOF\n");
   const contractPath = path.join(temporary, "contract.pdf");
   const amendmentPath = path.join(temporary, "amendment.pdf");
   await writeFile(contractPath, contract);
   await writeFile(amendmentPath, amendment);
-  const draftPath = await createMinimalDocx(temporary);
+  const draftPath = await createMinimalDocx(temporary, docxOptions);
   const draft = await readFile(draftPath);
   const requestPath = path.join(temporary, "request.json");
   await writeFile(requestPath, `${JSON.stringify({
@@ -1190,6 +1190,44 @@ test("reviewer mutations stay inside disposable read-only sandboxes", async () =
   }
 });
 
+test("ordinary highlighting is not accepted as a Track Changes finding", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-highlight-review-"));
+  const prepared = await prepareSimpleCase(temporary, { greenHighlight: true });
+  process.env.FAKE_GIGACODE_MODE = "highlight-as-track-changes";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    assert.equal(run.state.round, 1);
+    const review = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/reviews/legal-a.json"),
+      "utf8",
+    ));
+    assert.equal(review.verdict, "pass");
+    assert.deepEqual(review.findings, []);
+    assert.equal(review.dismissedFindings.length, 1);
+    assert.match(review.dismissedFindings[0].reason, /не содержит элементов.*Track Changes/);
+    const task = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/review-task-legal-a.json"),
+      "utf8",
+    ));
+    assert.equal(task.ooxmlMarkupFacts.revisionMarkup.count, 0);
+    assert.equal(task.ooxmlMarkupFacts.textHighlighting.byValue.green, 1);
+    const finalXml = await readFile(
+      path.join(run.runDirectory, "rounds/01/package/word/document.xml"),
+      "utf8",
+    );
+    assert.match(finalXml, /<w:highlight w:val="green"\/>/);
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(events, /"event":"review\.finding-dismissed"/);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
 test("blocked review state retains a downloadable verified candidate", async () => {
   await chmod(fakeGigacode, 0o755);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-blocked-candidate-"));
@@ -1280,7 +1318,7 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
   const prepared = await prepareSimpleCase(temporary);
   process.env.FAKE_GIGACODE_MODE =
     "fix-once-synthesis-format-retry-synthesis-writes-consensus-"
-    + "synthesis-read-only-mutates-workspace";
+    + "synthesis-writes-candidate-synthesis-read-only-mutates-workspace";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -1327,6 +1365,10 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
     assert.match(
       events,
       /"event":"synthesis\.sandbox-mutated".*"session":"synthesis-format:1:1"/,
+    );
+    assert.match(
+      events,
+      /"event":"synthesis\.candidate-write-discarded".*"session":"synthesis:1"/,
     );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;

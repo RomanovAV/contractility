@@ -32,6 +32,35 @@ const WORDPROCESSING_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
   "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ]);
+const TRACKED_CHANGE_ELEMENTS = new Set([
+  "ins",
+  "del",
+  "moveFrom",
+  "moveTo",
+  "moveFromRangeStart",
+  "moveFromRangeEnd",
+  "moveToRangeStart",
+  "moveToRangeEnd",
+  "customXmlInsRangeStart",
+  "customXmlInsRangeEnd",
+  "customXmlDelRangeStart",
+  "customXmlDelRangeEnd",
+  "customXmlMoveFromRangeStart",
+  "customXmlMoveFromRangeEnd",
+  "customXmlMoveToRangeStart",
+  "customXmlMoveToRangeEnd",
+  "cellIns",
+  "cellDel",
+  "cellMerge",
+  "numberingChange",
+  "pPrChange",
+  "rPrChange",
+  "sectPrChange",
+  "tblPrChange",
+  "tblGridChange",
+  "trPrChange",
+  "tcPrChange",
+]);
 
 async function run(command, args, options = {}) {
   try {
@@ -191,6 +220,70 @@ function visibleWordText(xml) {
       .replaceAll("&apos;", "'")
       .replaceAll("&amp;", "&"))
     .join("");
+}
+
+function wordprocessingPrefixes(xml) {
+  const prefixes = new Set();
+  for (const match of xml.matchAll(
+    /\bxmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(["'])(.*?)\2/g,
+  )) {
+    if (WORDPROCESSING_NAMESPACES.has(match[3])) prefixes.add(match[1] ?? "");
+  }
+  return prefixes;
+}
+
+function incrementCount(counts, key) {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+export async function wordprocessingMarkupFacts(packageDirectory) {
+  const revisionByElement = {};
+  const revisionByPart = {};
+  const highlightByValue = {};
+  let revisionMarkupCount = 0;
+  let highlightCount = 0;
+  let revisionRecordingEnabled = false;
+
+  for (const file of await walk(packageDirectory)) {
+    if (!file.relative.startsWith("word/") || !file.relative.endsWith(".xml")) continue;
+    const xml = await readFile(file.absolute, "utf8");
+    const prefixes = wordprocessingPrefixes(xml);
+    if (prefixes.size === 0) continue;
+    for (const match of xml.matchAll(
+      /<(?!\/|\?|!)(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)\b([^>]*)>/g,
+    )) {
+      const prefix = match[1] ?? "";
+      if (!prefixes.has(prefix)) continue;
+      const localName = match[2];
+      if (TRACKED_CHANGE_ELEMENTS.has(localName)) {
+        revisionMarkupCount += 1;
+        incrementCount(revisionByElement, localName);
+        incrementCount(revisionByPart, file.relative);
+      } else if (localName === "trackRevisions") {
+        revisionRecordingEnabled = true;
+      } else if (localName === "highlight") {
+        highlightCount += 1;
+        const value = match[3].match(
+          /(?:^|\s)(?:[A-Za-z_][\w.-]*:)?val\s*=\s*(["'])(.*?)\1/,
+        )?.[2] ?? "unspecified";
+        incrementCount(highlightByValue, value);
+      }
+    }
+  }
+
+  return {
+    schemaVersion: "contractility.ooxml-markup-facts.v1",
+    revisionMarkup: {
+      count: revisionMarkupCount,
+      byElement: revisionByElement,
+      byPart: revisionByPart,
+    },
+    revisionRecordingEnabled,
+    textHighlighting: {
+      count: highlightCount,
+      byValue: highlightByValue,
+    },
+  };
 }
 
 export async function editablePackageTextCount(packageDirectory, text) {

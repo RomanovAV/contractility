@@ -344,6 +344,23 @@ if (model === "missing-model") {
     && model === "review-model-b"
   ) {
     emitText("JSON сохранён в отчёт reviewer-а.");
+  } else if (mode.includes("highlight-as-track-changes") && model === "review-model-a") {
+    emit({
+      verdict: "changes-required",
+      findings: [{
+        severity: "minor",
+        category: "document-fidelity",
+        target: "package/word/document.xml paragraph 1",
+        sourceDocumentId: "candidate.docx",
+        page: null,
+        clause: "1",
+        evidence: "w:highlight w:val=\"green\"",
+        observed: "The text carries a green highlight (track-changes artifact).",
+        impact: "Visible formatting residual.",
+        proposedAction: "Remove w:highlight.",
+        confidence: 0.99,
+      }],
+    });
   } else if (mode.includes("fix-once")) {
     const roundDirectory = process.cwd();
     const xml = await readFile(path.join(roundDirectory, "package/word/document.xml"), "utf8");
@@ -427,6 +444,9 @@ if (model === "missing-model") {
       path.join(roundDirectory, "consensus.json"),
       `${JSON.stringify({ status: "unvalidated-model-file" })}\n`,
     );
+  }
+  if (mode.includes("synthesis-writes-candidate")) {
+    await writeFile(path.join(roundDirectory, "candidate.docx"), "model-written-candidate");
   }
   if (mode.includes("synthesis-blocked") && task.findingIds.length > 0) {
     emit({

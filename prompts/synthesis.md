@@ -22,6 +22,14 @@ Security boundary:
   deleted or replaced;
 - reject findings based only on structural dissimilarity between the proposed
   additional agreement and historical documents;
+- use the trusted `ooxmlMarkupFacts` from `synthesis-task.json` for claims about
+  revision markup; `w:highlight`, `w:shd`, `w:color`, `w:lang`, and `w:rFonts`
+  are ordinary formatting, never Word Track Changes; reject a finding that
+  calls one of them a tracked-change artifact when actual revision markup is
+  absent;
+- preserve existing template formatting and reject cosmetic style preferences
+  unless the finding demonstrates concrete corruption against the proposed
+  template or a usability/security defect;
 - when `allowUnresolvedFields=true`, reject findings based only on any value
   remaining empty because no supplied input establishes it, provided the exact
   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]` marker is visible at its target, it is
@@ -49,4 +57,6 @@ Rules:
 - `fixed` means all accepted findings were corrected and none remain unresolved;
 - `blocked` means at least one finding remains unresolved;
 - never silently omit a finding id;
-- do not create a DOCX or ZIP yourself.
+- do not open, create, modify, or repack `candidate.docx`; it is the immutable
+  pre-synthesis baseline. Modify only `package/` and required JSON artifacts.
+  The deterministic orchestrator validates and repacks the candidate.
