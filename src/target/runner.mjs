@@ -1254,6 +1254,15 @@ Untrusted findings: untrusted-findings.json`;
   if (validation.blocked) {
     throw new Error(`Арбитр не смог восстановить артефакты: ${validation.blocked}`);
   }
+  if (synthesis.statusNormalization) {
+    await appendEvent(runDirectory, "synthesis.status-normalized", {
+      round,
+      session: synthesisSessions.at(-1),
+      reportedStatus: synthesis.statusNormalization.reported,
+      normalizedStatus: synthesis.statusNormalization.normalized,
+      reason: "derived-from-finding-classification-arrays",
+    });
+  }
   const consensus = {
     schemaVersion: "contractility.review-consensus.v1",
     round,

@@ -34,6 +34,7 @@ import {
   formatSynthesisRetryPrompt,
   hasCompleteFindingIdCoverage,
   parseReviewReport,
+  parseSynthesisResult,
   synthesisArtifactRecoveryPrompt,
   synthesisReadOnlyRecoveryPrompt,
 } from "../src/target/review.mjs";
@@ -552,6 +553,42 @@ test("synthesis retry detects when prior output does not cover every finding id"
     hasCompleteFindingIdCoverage("finding-aaaaaaaa… accepted", findingIds),
     false,
   );
+});
+
+test("synthesis status is derived from complete finding classifications", () => {
+  const acceptedId = "finding-aaaaaaaaaaaaaaaa";
+  const rejectedId = "finding-bbbbbbbbbbbbbbbb";
+  const knownIds = new Set([acceptedId, rejectedId]);
+  const normalized = parseSynthesisResult(JSON.stringify({
+    status: "done",
+    acceptedFindingIds: [acceptedId],
+    rejectedFindingIds: [rejectedId],
+    unresolvedFindingIds: [],
+    summary: "Одно замечание исправлено, второе отклонено.",
+  }), knownIds);
+  assert.equal(normalized.status, "fixed");
+  assert.deepEqual(normalized.statusNormalization, {
+    reported: "done",
+    normalized: "fixed",
+  });
+
+  const blocked = parseSynthesisResult(JSON.stringify({
+    status: "fixed",
+    acceptedFindingIds: [],
+    rejectedFindingIds: [acceptedId],
+    unresolvedFindingIds: [rejectedId],
+    summary: "Одно замечание требует решения человека.",
+  }), knownIds);
+  assert.equal(blocked.status, "blocked");
+
+  const done = parseSynthesisResult(JSON.stringify({
+    status: "blocked",
+    acceptedFindingIds: [],
+    rejectedFindingIds: [acceptedId, rejectedId],
+    unresolvedFindingIds: [],
+    summary: "Все замечания отклонены.",
+  }), knownIds);
+  assert.equal(done.status, "done");
 });
 
 test("read-only synthesis recovery re-verifies unmapped findings without editing", () => {
@@ -1369,6 +1406,50 @@ test("review loop applies an arbiter fix and reruns all reviewers on a new candi
     assert.match(
       events,
       /"event":"synthesis\.candidate-write-discarded".*"session":"synthesis:1"/,
+    );
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("review loop normalizes an inconsistent synthesis status without model retries", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-synthesis-status-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE = "fix-once-synthesis-wrong-status";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    config.review.formatRetries = 2;
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "awaiting-human-approval");
+    assert.equal(run.state.round, 2);
+    const firstConsensus = JSON.parse(await readFile(
+      path.join(run.runDirectory, "rounds/01/consensus.json"),
+      "utf8",
+    ));
+    assert.equal(firstConsensus.status, "fixed");
+    assert.deepEqual(firstConsensus.statusNormalization, {
+      reported: "done",
+      normalized: "fixed",
+    });
+    const agentStatuses = await Promise.all(
+      (await readdir(path.join(run.runDirectory, "agent-status")))
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => JSON.parse(await readFile(
+          path.join(run.runDirectory, "agent-status", name),
+          "utf8",
+        ))),
+    );
+    assert.equal(
+      agentStatuses.some((status) => status.session.startsWith("synthesis-format:1:")),
+      false,
+    );
+    const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
+    assert.match(
+      events,
+      /"event":"synthesis\.status-normalized".*"reportedStatus":"done".*"normalizedStatus":"fixed"/,
     );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;

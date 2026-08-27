@@ -176,20 +176,25 @@ export function parseSynthesisResult(text, knownFindingIds) {
   if (new Set(all).size !== knownFindingIds.size) {
     throw new TypeError("Арбитр должен вынести решение по каждому замечанию.");
   }
-  if (value.status === "done" && (
-    value.acceptedFindingIds.length > 0 || value.unresolvedFindingIds.length > 0
-  )) {
-    throw new TypeError("status=done допустим только после отклонения всех замечаний.");
-  }
-  if (value.status === "fixed" && value.unresolvedFindingIds.length > 0) {
-    throw new TypeError("status=fixed несовместим с нерешёнными замечаниями.");
-  }
+  const normalizedStatus = value.unresolvedFindingIds.length > 0
+    ? "blocked"
+    : value.acceptedFindingIds.length > 0
+      ? "fixed"
+      : "done";
   return {
-    status: value.status,
+    status: normalizedStatus,
     acceptedFindingIds: [...value.acceptedFindingIds],
     rejectedFindingIds: [...value.rejectedFindingIds],
     unresolvedFindingIds: [...value.unresolvedFindingIds],
     summary: nonEmptyString(value.summary, "summary"),
+    ...(normalizedStatus === value.status
+      ? {}
+      : {
+        statusNormalization: {
+          reported: value.status,
+          normalized: normalizedStatus,
+        },
+      }),
   };
 }
 
@@ -267,7 +272,7 @@ ${escaped}
 ${escapedError}
 </UNTRUSTED_VALIDATION_ERROR>
 
-This is formatting-only recovery. Preserve the previous response's classifications, status, and
+This is formatting-only recovery. Preserve the previous response's classifications and
 summary; do not perform a new legal or document review and do not change a classification merely
 because you would now decide it differently. Do not use tools, inspect the workspace, read files,
 or create or modify any file, including consensus.json. Expand abbreviated finding ids by matching
@@ -278,9 +283,9 @@ ${JSON.stringify(trustedFindingIds)}
 
 Classify every trusted finding id exactly once. If the previous response does not determine an
 id's classification unambiguously, place only that id in unresolvedFindingIds and use
-status=blocked. Otherwise preserve the previous status subject to these consistency rules:
+status=blocked. Otherwise derive status mechanically from the classification arrays:
 - done requires every id to be rejected;
-- fixed requires no unresolved ids;
+- fixed requires at least one accepted id and no unresolved ids;
 - blocked requires at least one unresolved id.
 
 Return exactly one JSON object with this shape:

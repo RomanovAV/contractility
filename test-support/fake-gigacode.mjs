@@ -483,7 +483,7 @@ if (model === "missing-model") {
       );
     } else {
       emit({
-        status: "fixed",
+        status: mode.includes("synthesis-wrong-status") ? "done" : "fixed",
         acceptedFindingIds: task.findingIds,
         rejectedFindingIds: [],
         unresolvedFindingIds: [],
