@@ -14,16 +14,16 @@ if (nodeMajor >= 22) {
 try {
   const integrity = await verifyVendorIntegrity();
   if (integrity.ok) {
-    console.log(`✓ Проверены локальные OCR-компоненты: ${integrity.checkedFiles} файлов`);
+    console.log(`✓ Проверены локальные OCR/XML-компоненты: ${integrity.checkedFiles} файлов`);
   } else {
-    console.error("✗ Нарушена целостность локальных OCR-компонентов:");
+    console.error("✗ Нарушена целостность локальных OCR/XML-компонентов:");
     for (const failure of integrity.failures) {
       console.error(`  - ${failure.relativePath}: ${failure.reason}`);
     }
     failed = true;
   }
 } catch (error) {
-  console.error(`✗ Не удалось проверить OCR-компоненты: ${error.message}`);
+  console.error(`✗ Не удалось проверить OCR/XML-компоненты: ${error.message}`);
   failed = true;
 }
 

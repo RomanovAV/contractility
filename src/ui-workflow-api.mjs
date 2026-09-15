@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareCase, validateFormationRequest } from "./target/case-store.mjs";
+import { prepareCase, validateDocumentId, validateFormationRequest } from "./target/case-store.mjs";
 import { loadTargetConfig } from "./target/config.mjs";
 import {
   atomicWriteJson,
@@ -30,7 +30,6 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const JSON_LIMIT = 128 * 1024 * 1024;
 const FILE_LIMIT = 1024 * 1024 * 1024;
 const SAFE_ID = /^(?:stage|case|run|job|download)-[a-zA-Z0-9-]+$/;
-const SAFE_DOCUMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,80}$/;
 
 class HttpError extends Error {
   constructor(statusCode, message) {
@@ -78,10 +77,11 @@ function requireSafeId(value, label) {
 }
 
 function requireDocumentId(value) {
-  if (!SAFE_DOCUMENT_ID.test(value ?? "")) {
+  try {
+    return validateDocumentId(value);
+  } catch {
     throw new HttpError(400, "Некорректный идентификатор документа.");
   }
-  return value;
 }
 
 function safeJoin(root, relativePath) {
@@ -491,7 +491,12 @@ export function createUiWorkflowApi({
 
   async function createStaging(request, response) {
     const body = await readJsonBody(request);
-    const formationRequest = validateFormationRequest(body.formationRequest);
+    let formationRequest;
+    try {
+      formationRequest = validateFormationRequest(body.formationRequest);
+    } catch (error) {
+      throw new HttpError(400, error.message);
+    }
     const stageId = `stage-${randomBytes(12).toString("hex")}`;
     const stageDirectory = safeJoin(stagingRoot, stageId);
     await ensurePrivateDirectory(path.join(stageDirectory, "signed"));

@@ -83,6 +83,15 @@ export function safeRelativePath(value) {
   return normalized;
 }
 
+export function resolveWithinDirectory(directory, relativePath) {
+  const root = path.resolve(directory);
+  const resolved = path.resolve(root, safeRelativePath(relativePath));
+  if (!resolved.startsWith(`${root}${path.sep}`)) {
+    throw new TypeError(`Путь выходит за пределы каталога: ${relativePath}`);
+  }
+  return resolved;
+}
+
 export async function acquireRunLock(runDirectory) {
   const lockPath = path.join(runDirectory, "run.lock");
   const handle = await open(lockPath, "wx", 0o600).catch((error) => {

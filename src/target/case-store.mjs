@@ -6,9 +6,19 @@ import {
   ensurePrivateDirectory,
   readJson,
   requireRegularFile,
+  resolveWithinDirectory,
   sha256File,
   sha256Text,
 } from "./fs-utils.mjs";
+
+const SAFE_DOCUMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,80}$/;
+
+export function validateDocumentId(value) {
+  if (typeof value !== "string" || !SAFE_DOCUMENT_ID.test(value)) {
+    throw new TypeError("Некорректный идентификатор документа.");
+  }
+  return value;
+}
 
 export function validateFormationRequest(request) {
   if (request?.schemaVersion !== "contractility.formation-request.v1") {
@@ -24,6 +34,7 @@ export function validateFormationRequest(request) {
   }
   const ids = new Set();
   documents.forEach((document, index) => {
+    validateDocumentId(document?.id);
     if (
       !document?.id
       || ids.has(document.id)
@@ -89,7 +100,7 @@ export async function prepareCase({
     if (!sourcePath.toLowerCase().endsWith(".pdf")) {
       throw new TypeError(`Источник ${document.id} должен быть PDF.`);
     }
-    const destination = path.join(signedDirectory, `${document.id}.pdf`);
+    const destination = resolveWithinDirectory(signedDirectory, `${document.id}.pdf`);
     await copyVerified(sourcePath, destination, document.file.sha256);
     signed.push({
       id: document.id,
@@ -130,16 +141,17 @@ export async function verifyCase(caseDirectory) {
   if (manifest?.schemaVersion !== "contractility.case-manifest.v1") {
     throw new TypeError("Некорректный case-manifest.");
   }
-  const requestPath = path.join(caseDirectory, manifest.formationRequest.path);
+  for (const document of manifest.signedDocuments) validateDocumentId(document.id);
+  const requestPath = resolveWithinDirectory(caseDirectory, manifest.formationRequest.path);
   if (await sha256File(requestPath) !== manifest.formationRequest.sha256) {
     throw new Error("formation-request.json изменён после подготовки case.");
   }
   for (const document of manifest.signedDocuments) {
-    if (await sha256File(path.join(caseDirectory, document.path)) !== document.sha256) {
+    if (await sha256File(resolveWithinDirectory(caseDirectory, document.path)) !== document.sha256) {
       throw new Error(`Источник ${document.id} изменён после подготовки case.`);
     }
   }
-  const draftPath = path.join(caseDirectory, manifest.newAgreementEdition.path);
+  const draftPath = resolveWithinDirectory(caseDirectory, manifest.newAgreementEdition.path);
   if (await sha256File(draftPath) !== manifest.newAgreementEdition.sha256) {
     throw new Error("Предлагаемое допсоглашение DOCX изменено после подготовки case.");
   }

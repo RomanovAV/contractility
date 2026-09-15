@@ -9,6 +9,7 @@ import {
   stat,
 } from "node:fs/promises";
 import path from "node:path";
+import { SaxesParser } from "../../public/vendor/xml/saxes.cjs";
 import { safeRelativePath, sha256File, sha256Text } from "./fs-utils.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -95,45 +96,26 @@ async function walk(root, current = root, result = []) {
   return result;
 }
 
-function validateXmlShape(xml, relativePath) {
-  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) {
+function validateXmlPart(xml, relativePath) {
+  const parser = new SaxesParser({ xmlns: true, fileName: relativePath });
+  parser.on("error", (error) => {
+    throw new Error(`Нарушена XML-структура ${relativePath}: ${error.message}`, { cause: error });
+  });
+  parser.on("doctype", () => {
     throw new Error(`DTD/ENTITY запрещены в ${relativePath}.`);
-  }
-  const stack = [];
-  const tagPattern = /<([^!?][^>]*?)>/g;
-  for (const match of xml.matchAll(tagPattern)) {
-    const raw = match[1].trim();
-    if (!raw || raw.startsWith("!--") || raw.startsWith("![CDATA[")) continue;
-    if (raw.endsWith("/")) continue;
-    if (raw.startsWith("/")) {
-      const name = raw.slice(1).trim().split(/\s/, 1)[0];
-      const expected = stack.pop();
-      if (expected !== name) {
-        throw new Error(`Нарушена XML-структура ${relativePath}: ожидался </${expected}>.`);
+  });
+  if (relativePath.endsWith(".rels")) {
+    parser.on("opentag", (tag) => {
+      if (tag.local !== "Relationship") return;
+      const targetMode = tag.attributes.TargetMode?.value;
+      const type = tag.attributes.Type?.value ?? "";
+      if (targetMode === "External"
+        && !["/hyperlink", "/image"].some((suffix) => type.endsWith(suffix))) {
+        throw new Error(`Запрещённая внешняя связь в ${relativePath}: ${type}`);
       }
-    } else {
-      const name = raw.split(/\s/, 1)[0];
-      stack.push(name);
-    }
+    });
   }
-  if (stack.length > 0) {
-    throw new Error(`Незакрытый XML-тег <${stack.at(-1)}> в ${relativePath}.`);
-  }
-}
-
-function validateRelationships(xml, relativePath) {
-  for (const match of xml.matchAll(/<Relationship\b([^>]+?)\/?>/g)) {
-    const attributes = Object.fromEntries(
-      [...match[1].matchAll(/([A-Za-z:]+)="([^"]*)"/g)].map((item) => [item[1], item[2]]),
-    );
-    if (
-      attributes.TargetMode === "External"
-      && !["/hyperlink", "/image"].some((suffix) =>
-        String(attributes.Type ?? "").endsWith(suffix))
-    ) {
-      throw new Error(`Запрещённая внешняя связь в ${relativePath}: ${attributes.Type}`);
-    }
-  }
+  parser.write(xml).close();
 }
 
 export async function extractDocx(docxPath, destination) {
@@ -173,8 +155,7 @@ export async function validateExtractedPackage(packageDirectory) {
     }
     if (file.relative.endsWith(".xml") || file.relative.endsWith(".rels")) {
       const xml = await readFile(file.absolute, "utf8");
-      validateXmlShape(xml, file.relative);
-      if (file.relative.endsWith(".rels")) validateRelationships(xml, file.relative);
+      validateXmlPart(xml, file.relative);
     }
   }
   return { fileCount: files.length, totalBytes };

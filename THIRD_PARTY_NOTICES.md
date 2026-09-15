@@ -9,7 +9,15 @@
 | `tesseract.js-core` | 7.0.0 | Apache-2.0 | WebAssembly-ядро OCR |
 | `@tesseract.js-data/rus` | 1.0.0 | MIT | Русская языковая модель |
 | `@tesseract.js-data/eng` | 1.0.0 | MIT | Английская языковая модель |
+| `saxes` | 6.0.0 | ISC | Строгий разбор XML внутри DOCX |
+| `xmlchars` | 2.2.0 | MIT | Проверка символов XML для saxes |
 
 Полные тексты лицензий исполняемых компонентов включаются командой
 `npm run vendor` в каталог `public/vendor/licenses`. Языковые пакеты содержат
 данные Tesseract и распространяются npm-пакетами с лицензией MIT.
+
+В `public/vendor/xml` расширения CommonJS-файлов заменены на `.cjs`, а три
+импорта `xmlchars` в saxes переписаны на относительные пути к этим файлам.
+Остальной код парсера не изменён. Лицензия saxes отсутствует в npm-архиве;
+её копия взята из [исходников версии 6.0.0](https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE)
+и хранится в `scripts/vendor-licenses` для воспроизводимой сборки.

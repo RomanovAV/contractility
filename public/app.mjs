@@ -25,6 +25,8 @@ import {
   createWorkspaceSnapshot,
   parseWorkspaceSnapshot,
 } from "./workspace-snapshot.mjs";
+import { createPreviewRenderer } from "./preview-renderer.mjs";
+import { createTextEditor } from "./text-editor.mjs";
 
 const { createWorker } = Tesseract;
 const FORMATION_JOB_STORAGE_KEY = "contractility.active-formation-job.v1";
@@ -64,7 +66,6 @@ const state = {
   running: false,
   loading: false,
   cancelRequested: false,
-  previewRequest: 0,
   startedAt: null,
   processingDocument: null,
   processingPage: null,
@@ -80,6 +81,14 @@ const state = {
   formationPollTimer: null,
   formationPollPromise: null,
 };
+const previewRenderer = createPreviewRenderer();
+const textEditor = createTextEditor({
+  input: elements["page-text"],
+  editNote: elements["edit-note"],
+  currentResult: () => currentDocument()?.results[state.selectedPage - 1],
+  isLocked: inputsLocked,
+  onEdit: renderPageList,
+});
 
 const browserCapabilities = {
   webAssembly: typeof WebAssembly === "object",
@@ -180,6 +189,7 @@ function inputsLocked() {
 }
 
 function updateFormationState() {
+  textEditor.refreshLock();
   const hasOcrResults = completedPageCount() > 0;
   elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement;
   elements["download-json"].disabled = !isFormationReady();
@@ -302,6 +312,7 @@ async function sha256(arrayBuffer) {
 }
 
 function clearResults({ hideWorkspace = true } = {}) {
+  previewRenderer.cancel();
   for (const document of state.documents) {
     document.results = [];
   }
@@ -321,6 +332,7 @@ function clearResults({ hideWorkspace = true } = {}) {
 }
 
 function destroyDocuments(documents = state.documents) {
+  if (documents.includes(currentDocument())) previewRenderer.cancel();
   for (const document of documents) {
     if (typeof document.pdf?.destroy === "function") {
       Promise.resolve(document.pdf.destroy()).catch(console.error);
@@ -678,33 +690,36 @@ function renderPageList() {
 async function renderPreview(pageNumber) {
   const document = currentDocument();
   if (!document?.pdf) return;
-  const requestId = ++state.previewRequest;
-  const selectedDocument = state.selectedDocument;
-  const page = await document.pdf.getPage(pageNumber);
-  const displayedViewport = page.getViewport({ scale: 1 });
-  const additionalRotation = resolveAdditionalPageRotation(
-    displayedViewport,
-    rotationModeForPage(pageNumber, null, document),
-  );
-  const rotation = (page.rotate + additionalRotation) % 360;
-  const baseViewport = page.getViewport({ scale: 1, rotation });
-  const availableWidth = Math.max(280, elements["viewer-stage"].clientWidth - 44);
-  const cssScale = Math.min(1.6, availableWidth / baseViewport.width);
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const viewport = page.getViewport({ scale: cssScale * pixelRatio, rotation });
   const canvas = elements["viewer-canvas"];
-  const context = canvas.getContext("2d", { alpha: false });
-
-  canvas.width = Math.ceil(viewport.width);
-  canvas.height = Math.ceil(viewport.height);
-  canvas.style.width = `${Math.ceil(viewport.width / pixelRatio)}px`;
-  canvas.style.height = `${Math.ceil(viewport.height / pixelRatio)}px`;
-  elements["page-surface"].style.width = canvas.style.width;
-  elements["page-surface"].style.height = canvas.style.height;
-
-  await page.render({ canvasContext: context, viewport }).promise;
-  if (requestId !== state.previewRequest || selectedDocument !== state.selectedDocument) return;
-  renderOverlay(document.results[pageNumber - 1]?.lines ?? []);
+  canvas.style.visibility = "hidden";
+  renderOverlay([]);
+  await previewRenderer.render(async () => {
+    const page = await document.pdf.getPage(pageNumber);
+    const displayedViewport = page.getViewport({ scale: 1 });
+    const additionalRotation = resolveAdditionalPageRotation(
+      displayedViewport,
+      rotationModeForPage(pageNumber, null, document),
+    );
+    const rotation = (page.rotate + additionalRotation) % 360;
+    const baseViewport = page.getViewport({ scale: 1, rotation });
+    const availableWidth = Math.max(280, elements["viewer-stage"].clientWidth - 44);
+    const cssScale = Math.min(1.6, availableWidth / baseViewport.width);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const viewport = page.getViewport({ scale: cssScale * pixelRatio, rotation });
+    return () => {
+      const context = canvas.getContext("2d", { alpha: false });
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      canvas.style.width = `${Math.ceil(viewport.width / pixelRatio)}px`;
+      canvas.style.height = `${Math.ceil(viewport.height / pixelRatio)}px`;
+      elements["page-surface"].style.width = canvas.style.width;
+      elements["page-surface"].style.height = canvas.style.height;
+      return page.render({ canvasContext: context, viewport });
+    };
+  }, () => {
+    canvas.style.visibility = "visible";
+    renderOverlay(document.results[pageNumber - 1]?.lines ?? []);
+  });
 }
 
 function renderOverlay(lines) {
@@ -725,9 +740,7 @@ function renderOverlay(lines) {
 
 function updateTextPanel() {
   const result = currentDocument()?.results[state.selectedPage - 1];
-  elements["page-text"].value = result?.text ?? "";
-  elements["page-text"].disabled = !result || Boolean(result.error);
-  elements["edit-note"].hidden = !result?.manuallyEdited;
+  textEditor.show();
   const badge = elements["confidence-badge"];
   badge.className = "confidence-badge neutral";
 
@@ -2023,14 +2036,6 @@ elements["reset-page-rotation"].addEventListener("click", () => {
   delete document.pageRotationOverrides[String(state.selectedPage)];
   updatePageRotationControls();
   renderPreview(state.selectedPage).catch(console.error);
-});
-elements["page-text"].addEventListener("input", () => {
-  const result = currentDocument()?.results[state.selectedPage - 1];
-  if (!result) return;
-  result.text = elements["page-text"].value;
-  result.manuallyEdited = true;
-  elements["edit-note"].hidden = false;
-  renderPageList();
 });
 elements["save-workspace"].addEventListener("click", () => {
   saveWorkspaceSnapshot().catch((error) => {

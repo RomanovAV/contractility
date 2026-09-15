@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
 
 const APPROVAL_UNAVAILABLE =
@@ -359,6 +360,8 @@ async function runOnce({
 
   let stdout = "";
   let stderr = "";
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
   let timedOut = false;
   let idleTimedOut = false;
   let outputLimited = false;
@@ -378,9 +381,8 @@ async function runOnce({
   }, Math.max(1, config.sessionTimeoutSeconds) * 1000);
   sessionTimer.unref();
 
-  const append = (target, chunk) => {
-    resetIdle();
-    const next = target + chunk.toString("utf8");
+  const append = (target, text) => {
+    const next = target + text;
     if (next.length > MAX_CAPTURE_CHARS) {
       outputLimited = true;
       terminateProcess(child, "output-limit");
@@ -389,7 +391,8 @@ async function runOnce({
     return next;
   };
   child.stdout.on("data", (chunk) => {
-    stdout = append(stdout, chunk);
+    resetIdle();
+    stdout = append(stdout, stdoutDecoder.write(chunk));
     writeTranscriptChunk(transcript, "stdout", chunk);
     onEvent("activity", {
       session,
@@ -401,7 +404,8 @@ async function runOnce({
     });
   });
   child.stderr.on("data", (chunk) => {
-    stderr = append(stderr, chunk);
+    resetIdle();
+    stderr = append(stderr, stderrDecoder.write(chunk));
     writeTranscriptChunk(transcript, "stderr", chunk);
     onEvent("activity", {
       session,
@@ -423,6 +427,8 @@ async function runOnce({
   } catch (error) {
     executionError = error;
   } finally {
+    stdout = append(stdout, stdoutDecoder.end());
+    stderr = append(stderr, stderrDecoder.end());
     activeChildren.delete(child);
     clearTimeout(sessionTimer);
     clearTimeout(idleTimer);

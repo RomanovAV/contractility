@@ -95,6 +95,33 @@ for (const language of ["rus", "eng"]) {
   );
 }
 
+// Keep the XML parser self-contained, including CommonJS dependency paths.
+// Target machines run this vendored copy without installing node_modules.
+const xmlVendorRoot = path.join(vendorRoot, "xml");
+await mkdir(xmlVendorRoot, { recursive: true });
+let saxesSource = await readFile(path.join(modulesRoot, "saxes", "saxes.js"), "utf8");
+for (const [source, destination] of [
+  ["xmlchars/xml/1.0/ed5", "xmlchars-xml-1.0-ed5.cjs"],
+  ["xmlchars/xml/1.1/ed2", "xmlchars-xml-1.1-ed2.cjs"],
+  ["xmlchars/xmlns/1.0/ed3", "xmlchars-xmlns-1.0-ed3.cjs"],
+]) {
+  const requireExpression = `require("${source}")`;
+  if (!saxesSource.includes(requireExpression)) {
+    throw new Error(`Не найдена ожидаемая зависимость saxes: ${source}`);
+  }
+  saxesSource = saxesSource.replaceAll(requireExpression, `require("./${destination}")`);
+  await copyFile(path.join(modulesRoot, `${source}.js`), path.join(xmlVendorRoot, destination));
+}
+await writeFile(path.join(xmlVendorRoot, "saxes.cjs"), saxesSource, "utf8");
+await copyFile(
+  path.join(projectRoot, "scripts/vendor-licenses/saxes-LICENSE.txt"),
+  path.join(vendorRoot, "licenses/saxes-LICENSE.txt"),
+);
+await copyFile(
+  path.join(modulesRoot, "xmlchars/LICENSE"),
+  path.join(vendorRoot, "licenses/xmlchars-LICENSE.txt"),
+);
+
 await copyFile(
   path.join(modulesRoot, "pdfjs-dist", "LICENSE"),
   path.join(vendorRoot, "licenses", "pdfjs-dist-LICENSE.txt"),
@@ -117,6 +144,8 @@ for (const relativePath of files) {
 const manifest = {
   schemaVersion: 1,
   packages: {
+    saxes: await readPackageVersion("saxes"),
+    xmlchars: await readPackageVersion("xmlchars"),
     "pdfjs-dist": await readPackageVersion("pdfjs-dist"),
     "tesseract.js": await readPackageVersion("tesseract.js"),
     "tesseract.js-core": await readPackageVersion("tesseract.js-core"),
