@@ -31,6 +31,7 @@ import { createTextEditor } from "./text-editor.mjs";
 
 const { createWorker } = Tesseract;
 const FORMATION_JOB_STORAGE_KEY = "contractility.active-formation-job.v1";
+const FORMATION_RUN_STORAGE_KEY = "contractility.active-formation-run.v1";
 
 GlobalWorkerOptions.workerSrc = new URL(
   "./vendor/pdfjs/pdf.worker.min.mjs",
@@ -168,6 +169,33 @@ function setFormationJobId(jobId) {
   } catch {
     // Safari private mode may deny persistent storage. The active-job API is
     // still sufficient to recover a running server task in that case.
+  }
+}
+
+function isServerFormationRunId(runId) {
+  return /^run-[a-zA-Z0-9-]+$/.test(runId ?? "");
+}
+
+function storedFormationRunId() {
+  try {
+    const runId = globalThis.localStorage.getItem(FORMATION_RUN_STORAGE_KEY);
+    return isServerFormationRunId(runId) ? runId : null;
+  } catch {
+    return null;
+  }
+}
+
+function setFormationRunId(runId) {
+  state.formationRunId = runId;
+  try {
+    if (isServerFormationRunId(runId)) {
+      globalThis.localStorage.setItem(FORMATION_RUN_STORAGE_KEY, runId);
+    } else if (runId == null) {
+      globalThis.localStorage.removeItem(FORMATION_RUN_STORAGE_KEY);
+    }
+  } catch {
+    // The exact run remains available during this page session even if the
+    // browser denies persistent storage.
   }
 }
 
@@ -597,7 +625,7 @@ function resetDocuments() {
   invalidateMaster();
   state.documents = [];
   state.draftAgreement = null;
-  state.formationRunId = null;
+  setFormationRunId(null);
   state.formationRun = null;
   elements["formation-run-card"].hidden = true;
   state.selectedDocument = 0;
@@ -1300,7 +1328,7 @@ async function loadWorkspaceSnapshot(fileList) {
     state.formationPollTimer = null;
     state.formationBusy = false;
     setFormationJobId(null);
-    state.formationRunId = null;
+    setFormationRunId(null);
     state.formationRun = null;
     elements["formation-run-card"].hidden = true;
     updateProgress({
@@ -1729,7 +1757,7 @@ function renderReviewers(run) {
 }
 
 function renderFormationRun(job) {
-  state.formationRunId = job.runId ?? state.formationRunId;
+  if (job.runId) setFormationRunId(job.runId);
   state.formationRun = job.run ?? state.formationRun;
   const run = job.run;
   const runState = run?.state;
@@ -1876,18 +1904,20 @@ async function restoreFormationJob() {
     job = active.job;
   }
   if (!job) {
-    const latest = await workflowJson("/runs/latest");
-    if (!latest.runId || !latest.run) return;
-    state.formationBusy = false;
-    renderFormationRun({
-      status: "completed",
-      runId: latest.runId,
-      run: latest.run,
-    });
-    await syncRunMaster();
-    updateFormationState();
-    setRunning(false);
-    return;
+    const savedRunId = storedFormationRunId();
+    if (!savedRunId) return;
+    try {
+      const run = await workflowJson(`/runs/${encodeURIComponent(savedRunId)}`);
+      state.formationBusy = false;
+      renderFormationRun({ status: "completed", runId: savedRunId, run });
+      await syncRunMaster();
+      updateFormationState();
+      setRunning(false);
+      return;
+    } catch {
+      setFormationRunId(null);
+      return;
+    }
   }
   setFormationJobId(job.jobId);
   state.formationBusy = job.status === "running";
@@ -1952,7 +1982,7 @@ async function launchFormation(workflowStage = "agreement") {
   let stageId = null;
   state.formationBusy = true;
   setFormationJobId("preparing");
-  state.formationRunId = null;
+  setFormationRunId(null);
   state.formationRun = null;
   elements["download-diagnostics"].disabled = true;
   setError("");
