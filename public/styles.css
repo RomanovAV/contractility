@@ -309,3 +309,15 @@ footer { padding: 26px 24px 38px; color: #829089; text-align: center; font-size:
   .file-order-actions { flex-direction: column; }
   .draft-summary { align-items: flex-start; }
 }
+
+/* Two independent stages: validated master and proposed agreement. */
+.workflow-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.master-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+#master-details { margin-top: 24px; }
+#master-text { width: 100%; min-height: 340px; padding: 18px; margin: 10px 0 18px; border: 1px solid #ccd4dd; border-radius: 12px; font-family: inherit; font-size: 15px; line-height: 1.6; resize: vertical; }
+#master-scope { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
+#master-status { line-height: 1.6; overflow-wrap: anywhere; }
+@media (max-width: 650px) { .workflow-strip { grid-template-columns: 1fr; } }
+
+#master-card, #master-card + .setup-card { margin-top: 22px; }
+#master-card + .setup-card .draft-section { margin: 0; padding: 0; border: 0; }

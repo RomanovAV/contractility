@@ -11,24 +11,82 @@
     "newAgreementEdition"
   ],
   "properties": {
-    "schemaVersion": { "const": "contractility.case-manifest.v1" },
-    "caseId": { "type": "string" },
+    "schemaVersion": {
+      "const": "contractility.case-manifest.v1"
+    },
+    "caseId": {
+      "type": "string"
+    },
     "formationRequest": {
       "type": "object",
-      "required": ["path", "sha256"]
+      "required": [
+        "path",
+        "sha256"
+      ]
     },
     "signedDocuments": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {
         "type": "object",
-        "required": ["id", "role", "order", "path", "sha256", "originalName"]
+        "required": [
+          "id",
+          "role",
+          "order",
+          "path",
+          "sha256",
+          "originalName"
+        ]
       }
     },
     "newAgreementEdition": {
-      "type": "object",
-      "required": ["path", "sha256", "originalName"]
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "path",
+        "sha256",
+        "originalName"
+      ]
+    },
+    "workflowStage": {
+      "enum": [
+        "full",
+        "master",
+        "agreement"
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workflowStage": {
+            "const": "master"
+          }
+        },
+        "required": [
+          "workflowStage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "newAgreementEdition": {
+            "type": "null"
+          },
+          "signedDocuments": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "newAgreementEdition": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  ]
 }
-

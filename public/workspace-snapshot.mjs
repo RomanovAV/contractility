@@ -1,3 +1,5 @@
+import { validateMasterContract, validateMasterStructure } from "./master-contract.mjs";
+
 const SNAPSHOT_SCHEMA = "contractility.workspace-snapshot.v1";
 const MAX_EMBEDDED_FILE_BYTES = 1024 * 1024 * 1024;
 
@@ -83,6 +85,7 @@ export async function createWorkspaceSnapshot({
   ocrResult,
   documents,
   draftAgreement = null,
+  masterContract = null,
   createdAt = new Date().toISOString(),
 }) {
   requireObject(ocrResult, "ocrResult");
@@ -109,6 +112,7 @@ export async function createWorkspaceSnapshot({
   return {
     schemaVersion: SNAPSHOT_SCHEMA,
     createdAt,
+    ...(masterContract ? { masterContract: await validateMasterContract(masterContract) } : {}),
     ocrResult: retainedOcrResult,
     signedDocuments,
     draftAgreement: draftAgreement
@@ -215,6 +219,7 @@ export function parseWorkspaceSnapshot(value) {
   return {
     schemaVersion: SNAPSHOT_SCHEMA,
     createdAt: snapshot.createdAt ?? null,
+    ...(snapshot.masterContract ? { masterContract: validateMasterStructure(snapshot.masterContract) } : {}),
     ocrResult,
     signedDocuments,
     draftAgreement,

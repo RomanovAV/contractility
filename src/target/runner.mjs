@@ -25,6 +25,7 @@ import {
   acquireRunLock,
   appendEvent,
   atomicWriteJson,
+  atomicWriteText,
   ensurePrivateDirectory,
   readJson,
   sha256File,
@@ -55,6 +56,8 @@ import {
   HUMAN_REQUIRED_MARKER,
   validateReconstructionScope,
 } from "./scope.mjs";
+
+import { createMasterContract, validateMasterContract } from "../../public/master-contract.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -681,11 +684,11 @@ async function verifyImmutableRunInputs(runDirectory, manifest) {
       manifest.formationRequest.sha256,
       "formation-request.json",
     ],
-    [
+    ...(manifest.newAgreementEdition ? [[
       path.join(runDirectory, "input/new-edition.docx"),
       manifest.newAgreementEdition.sha256,
       "new-edition.docx",
-    ],
+    ]] : []),
     ...manifest.signedDocuments.map((document) => [
       path.join(runDirectory, "input/signed", `${document.id}.pdf`),
       document.sha256,
@@ -695,6 +698,16 @@ async function verifyImmutableRunInputs(runDirectory, manifest) {
   for (const [filePath, expected, label] of checks) {
     if (await sha256File(filePath) !== expected) {
       throw new Error(`Агент изменил неизменяемый вход: ${label}.`);
+    }
+  }
+  const request = await readJson(path.join(runDirectory, "input/formation-request.json"));
+  if (request.inputs.masterContract) {
+    const state = await readJson(path.join(runDirectory, "state.json"));
+    const artifacts = path.join(runDirectory, "rounds", String(state.round).padStart(2, "0"), "artifacts");
+    const payload = request.inputs.masterContract.payload;
+    if (await readFile(path.join(artifacts, "current-contract.md"), "utf8") !== payload.currentContract
+      || JSON.stringify(await readJson(path.join(artifacts, "reconstruction-scope.json"))) !== JSON.stringify(payload.reconstructionScope)) {
+      throw new Error("Агент изменил проверенный мастер-договор. Требуется отдельная повторная проверка мастер-договора.");
     }
   }
 }
@@ -851,7 +864,7 @@ async function runReviewer({
       model: reviewer.model,
       focus: reviewer.focus,
     },
-    policy: formationPolicy(),
+    policy: { ...formationPolicy(), currentContractPolicy: (await readJson(path.join(runDirectory, "state.json"))).workflowStage === "agreement" ? "validated-master-read-only" : "reconstructed-contract" },
     ooxmlMarkupFacts: candidate.ooxmlMarkupFacts,
     evidenceManifestSha256,
     paths: {
@@ -1025,7 +1038,7 @@ async function runSynthesis({
     round,
     candidateSha256: candidate.candidateSha256,
     findingIds: [...findingMap.keys()],
-    policy: formationPolicy(),
+    policy: { ...formationPolicy(), currentContractPolicy: (await readJson(path.join(runDirectory, "state.json"))).workflowStage === "agreement" ? "validated-master-read-only" : "reconstructed-contract" },
     ooxmlMarkupFacts: candidate.ooxmlMarkupFacts,
     evidenceManifestSha256,
     paths: {
@@ -1308,6 +1321,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     runId,
     caseId: verifiedCase.manifest.caseId,
     status: "created",
+    workflowStage: verifiedCase.manifest.workflowStage ?? "full",
     createdAt: new Date().toISOString(),
     round: 0,
   };
@@ -1321,7 +1335,7 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       cp(path.join(caseDirectory, "inputs/signed"), path.join(inputDirectory, "signed"), {
         recursive: true,
       }),
-      copyFile(verifiedCase.draftPath, path.join(inputDirectory, "new-edition.docx")),
+      ...(verifiedCase.draftPath ? [copyFile(verifiedCase.draftPath, path.join(inputDirectory, "new-edition.docx"))] : []),
       atomicWriteJson(path.join(runDirectory, "input-manifest.json"), verifiedCase.manifest),
     ]);
     state = await writeState(runDirectory, { ...state, status: "inputs-verified" });
@@ -1331,21 +1345,23 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     const formationRequest = await readJson(
       path.join(inputDirectory, "formation-request.json"),
     );
+    const importedMaster = formationRequest.inputs.masterContract;
+    const masterOnly = formationRequest.workflowStage === "master";
     const evidenceWorkspace = await materializeEvidenceWorkspace({
       roundDirectory: firstRoundDirectory,
-      formationRequest,
+      formationRequest: importedMaster ? { inputs: { signedDocuments: importedMaster.payload.signedDocuments } } : formationRequest,
       sourceRequestSha256: verifiedCase.manifest.formationRequest.sha256,
     });
     const evidenceManifestSha256 = evidenceWorkspace.manifestSha256;
-    await extractDocx(
-      path.join(inputDirectory, "new-edition.docx"),
-      path.join(firstRoundDirectory, "package"),
-    );
-    const referenceInventory = await packageInventory(path.join(firstRoundDirectory, "package"));
-    await atomicWriteJson(path.join(runDirectory, "reference-inventory.json"), referenceInventory);
+    let referenceInventory;
+    if (!masterOnly) {
+      await extractDocx(path.join(inputDirectory, "new-edition.docx"), path.join(firstRoundDirectory, "package"));
+      referenceInventory = await packageInventory(path.join(firstRoundDirectory, "package"));
+      await atomicWriteJson(path.join(runDirectory, "reference-inventory.json"), referenceInventory);
+    }
     const sharedProducerTask = {
       caseId: verifiedCase.manifest.caseId,
-      policy: formationPolicy(),
+      policy: { ...formationPolicy(), ...(importedMaster ? { currentContractPolicy: "validated-master-read-only", masterSha256: importedMaster.sha256 } : {}) },
       evidenceManifestSha256,
       evidenceDocuments: evidenceWorkspace.manifest.documents.map((document) => ({
         id: document.id,
@@ -1354,46 +1370,66 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
         pageCount: document.pageCount,
       })),
     };
-    await atomicWriteJson(path.join(firstRoundDirectory, "reconstruction-task.json"), {
-      schemaVersion: "contractility.producer-reconstruction-task.v1",
-      ...sharedProducerTask,
-      paths: {
-        evidenceManifest: "evidence/manifest.json",
-        evidenceDocuments: "evidence/documents",
-        currentContract: "artifacts/current-contract.md",
-        reconstructionScope: "artifacts/reconstruction-scope.json",
-        blocker: "artifacts/blocker.json",
-      },
-    });
-    state = await writeState(runDirectory, {
-      ...state,
-      status: "reconstructing-contract",
-      round: 1,
-    });
-    const reconstruction = await runProducerStage({
-      stage: "reconstruct",
-      expectedStatus: "reconstruction-ready",
-      promptName: "producer-reconstruct.md",
-      taskName: "reconstruction-task.json",
-      roundDirectory: firstRoundDirectory,
-      config,
-      runDirectory,
-      onGigacodeEvent: gigacodeEvents.record,
-      verifyIntegrity: async () => {
-        await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
-        await verifyEvidenceWorkspace(
-          path.join(firstRoundDirectory, "evidence"),
-          evidenceManifestSha256,
-        );
-      },
-      validateArtifacts: () => requireReconstructionArtifacts(firstRoundDirectory),
-    });
-    if (reconstruction.blocked) {
+    if (importedMaster) {
+      await validateMasterContract(importedMaster);
+      await atomicWriteText(path.join(firstRoundDirectory, "artifacts/current-contract.md"), importedMaster.payload.currentContract);
+      await atomicWriteJson(path.join(firstRoundDirectory, "artifacts/reconstruction-scope.json"), importedMaster.payload.reconstructionScope);
+      await requireReconstructionArtifacts(firstRoundDirectory);
+      state = await writeState(runDirectory, { ...state, round: 1, masterSha256: importedMaster.sha256 });
+      await appendEvent(runDirectory, "master.reused", { sha256: importedMaster.sha256, approval: importedMaster.approval });
+    } else {
+      await atomicWriteJson(path.join(firstRoundDirectory, "reconstruction-task.json"), {
+        schemaVersion: "contractility.producer-reconstruction-task.v1",
+        ...sharedProducerTask,
+        paths: {
+          evidenceManifest: "evidence/manifest.json",
+          evidenceDocuments: "evidence/documents",
+          currentContract: "artifacts/current-contract.md",
+          reconstructionScope: "artifacts/reconstruction-scope.json",
+          blocker: "artifacts/blocker.json",
+        },
+      });
       state = await writeState(runDirectory, {
         ...state,
-        status: "blocked",
-        blocker: reconstruction.blocked,
+        status: "reconstructing-contract",
+        round: 1,
       });
+      const reconstruction = await runProducerStage({
+        stage: "reconstruct",
+        expectedStatus: "reconstruction-ready",
+        promptName: "producer-reconstruct.md",
+        taskName: "reconstruction-task.json",
+        roundDirectory: firstRoundDirectory,
+        config,
+        runDirectory,
+        onGigacodeEvent: gigacodeEvents.record,
+        verifyIntegrity: async () => {
+          await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+          await verifyEvidenceWorkspace(
+            path.join(firstRoundDirectory, "evidence"),
+            evidenceManifestSha256,
+          );
+        },
+        validateArtifacts: () => requireReconstructionArtifacts(firstRoundDirectory),
+      });
+      if (reconstruction.blocked) {
+        state = await writeState(runDirectory, {
+          ...state,
+          status: "blocked",
+          blocker: reconstruction.blocked,
+        });
+        return { runId, runDirectory, state };
+      }
+
+    }
+    if (masterOnly) {
+      const master = await createMasterContract({
+        currentContract: await readFile(path.join(firstRoundDirectory, "artifacts/current-contract.md"), "utf8"),
+        reconstructionScope: await readJson(path.join(firstRoundDirectory, "artifacts/reconstruction-scope.json")),
+        signedDocuments: formationRequest.inputs.signedDocuments,
+      });
+      await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
+      state = await writeState(runDirectory, { ...state, status: "awaiting-master-approval", masterSha256: master.sha256, masterPath: "master-contract.json" });
       return { runId, runDirectory, state };
     }
 
@@ -1713,6 +1749,41 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     } finally {
       await releaseLock();
     }
+  }
+}
+
+export async function readRunMaster(runDirectory) {
+  const state = await readJson(path.join(runDirectory, "state.json"));
+  if (state.workflowStage === "agreement") {
+    const inputPath = path.join(runDirectory, "input/formation-request.json");
+    const manifest = await readJson(path.join(runDirectory, "input-manifest.json"));
+    if (await sha256File(inputPath) !== manifest.formationRequest.sha256) throw new Error("Входной мастер-договор изменён.");
+    return validateMasterContract((await readJson(inputPath)).inputs.masterContract);
+  }
+  if (!["awaiting-master-approval", "master-approved"].includes(state.status)) {
+    throw new Error("Мастер-договор ещё не готов.");
+  }
+  const master = await validateMasterContract(await readJson(path.join(runDirectory, "master-contract.json")), {
+    requireApproval: state.status === "master-approved",
+  });
+  if (master.sha256 !== state.masterSha256) throw new Error("Хеш мастер-договора изменился.");
+  return master;
+}
+
+export async function approveMasterRun({ runDirectory, approver, masterSha256 }) {
+  const release = await acquireRunLock(runDirectory);
+  try {
+    const state = await readJson(path.join(runDirectory, "state.json"));
+    if (state.status !== "awaiting-master-approval") throw new Error("Мастер-договор не ожидает подтверждения.");
+    if (typeof approver !== "string" || !approver.trim()) throw new Error("Укажите ФИО проверяющего.");
+    const master = await readRunMaster(runDirectory);
+    if (masterSha256 !== master.sha256) throw new Error("Хеш мастер-договора изменился.");
+    master.approval = { approver: approver.trim(), approvedAt: new Date().toISOString(), sha256: master.sha256 };
+    await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
+    await writeState(runDirectory, { ...state, status: "master-approved", masterApproval: master.approval });
+    return master;
+  } finally {
+    await release();
   }
 }
 

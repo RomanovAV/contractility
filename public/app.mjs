@@ -25,6 +25,7 @@ import {
   createWorkspaceSnapshot,
   parseWorkspaceSnapshot,
 } from "./workspace-snapshot.mjs";
+import { validateMasterContract } from "./master-contract.mjs";
 import { createPreviewRenderer } from "./preview-renderer.mjs";
 import { createTextEditor } from "./text-editor.mjs";
 
@@ -38,6 +39,8 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
+    "start-master", "load-master", "master-file-input", "download-master", "download-master-text",
+    "master-status", "master-details", "master-text", "master-scope", "master-approval", "master-approver", "approve-master", "run-title",
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
     "documents-list", "download-candidate", "download-diagnostics", "download-final", "download-json",
@@ -71,6 +74,11 @@ const state = {
   processingPage: null,
   processingDetail: "",
   draftAgreement: null,
+  masterContract: null,
+  masterRunId: null,
+  masterSyncKey: null,
+  masterRevision: 0,
+  masterRecoveryAllowed: true,
   targetSession: null,
   targetSessionError: null,
   targetSessionPromise: null,
@@ -87,7 +95,11 @@ const textEditor = createTextEditor({
   editNote: elements["edit-note"],
   currentResult: () => currentDocument()?.results[state.selectedPage - 1],
   isLocked: inputsLocked,
-  onEdit: renderPageList,
+  onEdit: () => {
+    invalidateMaster();
+    renderPageList();
+    updateFormationState();
+  },
 });
 
 const browserCapabilities = {
@@ -181,7 +193,7 @@ function isOcrComplete() {
 }
 
 function isFormationReady() {
-  return isOcrComplete() && Boolean(state.draftAgreement?.sha256);
+  return Boolean(state.masterContract?.approval) && Boolean(state.draftAgreement?.sha256);
 }
 
 function inputsLocked() {
@@ -190,36 +202,30 @@ function inputsLocked() {
 
 function updateFormationState() {
   textEditor.refreshLock();
+  renderMaster();
   const hasOcrResults = completedPageCount() > 0;
-  elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement;
+  elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement && !state.masterContract;
   elements["download-json"].disabled = !isFormationReady();
   elements["download-text"].disabled = !isFormationReady();
   elements["save-workspace"].disabled = !isOcrComplete() || inputsLocked();
   const targetReady = Boolean(state.targetSession?.target?.ready);
   const launchAvailability = formationLaunchAvailability({
     ocrComplete: isOcrComplete(),
+    masterReady: Boolean(state.masterContract?.approval),
     draftReady: Boolean(state.draftAgreement?.sha256),
     targetReady,
     targetChecking: Boolean(state.targetSessionPromise),
-    formationBusy: state.formationBusy,
+    formationBusy: state.formationBusy || state.running || state.loading,
     formationJobActive: Boolean(state.formationJobId),
   });
   elements["start-formation"].disabled = !launchAvailability.enabled;
   elements["start-formation"].title = launchAvailability.reason;
 
-  if (isFormationReady()) {
-    elements["formation-status"].textContent =
-      "PDF-комплект распознан, порядок источников зафиксирован, DOCX проверен по SHA-256. Пакет готов для реконструкции действующей редакции и генерации финального файла.";
-  } else if (!isOcrComplete() && state.draftAgreement) {
-    elements["formation-status"].textContent =
-      "Предлагаемое допсоглашение DOCX загружено. Завершите распознавание всех страниц подписанного комплекта.";
-  } else if (isOcrComplete()) {
-    elements["formation-status"].textContent =
-      "Подписанный комплект распознан. Загрузите предлагаемое дополнительное соглашение в DOCX.";
-  } else {
-    elements["formation-status"].textContent =
-      "Завершите OCR подписанных PDF и загрузите предлагаемое дополнительное соглашение DOCX.";
-  }
+  elements["formation-status"].textContent = isFormationReady()
+    ? "Проверенный мастер-договор и драфт готовы. Будет подготовлено рекомендованное допсоглашение с межмодельным ревью."
+    : !state.masterContract?.approval
+      ? "Сначала сформируйте и подтвердите мастер-договор или загрузите ранее проверенный файл проекта."
+      : "Мастер-договор подтверждён. Загрузите драфт дополнительного соглашения DOCX.";
 
   elements["target-status-note"].className = "target-status-note";
   if (targetReady) {
@@ -234,7 +240,7 @@ function updateFormationState() {
     elements["target-status-note"].classList.add("failed");
     elements["target-status-note"].textContent =
       `GigaCode недоступен: ${state.targetSessionError ?? state.targetSession.target.error}. `
-      + "После исправления конфигурации нажмите «Запустить формирование» для повторной проверки.";
+      + "После исправления конфигурации нажмите кнопку формирования нужного этапа для повторной проверки.";
   } else {
     elements["target-status-note"].textContent = "Проверяется готовность GigaCode…";
   }
@@ -402,6 +408,7 @@ function reorderHistoricalDocument(index, direction) {
   const selectedId = currentDocument()?.id;
   const reordered = moveHistoricalDocument(state.documents, index, direction);
   if (reordered === state.documents) return;
+  invalidateMaster();
   state.documents = reordered;
   state.selectedDocument = Math.max(
     0,
@@ -513,6 +520,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
     };
   });
   const documentBatch = mergeDocumentBatch(previousDocuments, pendingDocuments);
+  invalidateMaster();
   state.documents = documentBatch.documents;
   // Load PDF.js data into the normalized objects owned by state so the preview
   // and OCR observe the loaded PDF rather than stale pre-normalization objects.
@@ -586,8 +594,12 @@ async function loadDocuments(fileList, { append = false } = {}) {
 function resetDocuments() {
   if (inputsLocked()) return;
   destroyDocuments();
+  invalidateMaster();
   state.documents = [];
   state.draftAgreement = null;
+  state.formationRunId = null;
+  state.formationRun = null;
+  elements["formation-run-card"].hidden = true;
   state.selectedDocument = 0;
   state.selectedPage = 1;
   elements["file-input"].value = "";
@@ -1005,6 +1017,7 @@ async function runOcr() {
     state.processingDetail = "";
     updateFormationState();
   }
+  invalidateMaster();
   state.cancelRequested = false;
   setRunning(true);
   state.processingDetail = "Подготовка OCR";
@@ -1167,6 +1180,7 @@ async function saveWorkspaceSnapshot() {
       ocrResult: buildDocumentResult(),
       documents: state.documents,
       draftAgreement: state.draftAgreement,
+      masterContract: state.masterContract?.approval ? state.masterContract : null,
     });
     download(
       `${baseFileName()}.contractility.json`,
@@ -1194,6 +1208,8 @@ async function loadWorkspaceSnapshot(fileList) {
   const previousWorkspace = {
     documents: state.documents,
     draftAgreement: state.draftAgreement,
+    masterContract: state.masterContract,
+    masterRunId: state.masterRunId,
     selectedDocument: state.selectedDocument,
     selectedPage: state.selectedPage,
     startedAt: state.startedAt,
@@ -1209,6 +1225,7 @@ async function loadWorkspaceSnapshot(fileList) {
   });
   try {
     const snapshot = parseWorkspaceSnapshot(JSON.parse(await files[0].text()));
+    if (snapshot.masterContract) await validateMasterContract(snapshot.masterContract);
     for (const [index, embedded] of snapshot.signedDocuments.entries()) {
       const ocrDocument = snapshot.ocrResult.documents[index];
       if (!embedded.file.name.toLowerCase().endsWith(".pdf")) {
@@ -1260,6 +1277,8 @@ async function loadWorkspaceSnapshot(fileList) {
       };
     }
 
+    invalidateMaster();
+    state.masterContract = snapshot.masterContract ?? null;
     state.documents = candidateDocuments;
     state.draftAgreement = draftAgreement;
     state.selectedDocument = 0;
@@ -1297,6 +1316,8 @@ async function loadWorkspaceSnapshot(fileList) {
     if (state.documents === candidateDocuments) {
       state.documents = previousWorkspace.documents;
       state.draftAgreement = previousWorkspace.draftAgreement;
+      state.masterContract = previousWorkspace.masterContract;
+      state.masterRunId = previousWorkspace.masterRunId;
       state.selectedDocument = previousWorkspace.selectedDocument;
       state.selectedPage = previousWorkspace.selectedPage;
       state.startedAt = previousWorkspace.startedAt;
@@ -1321,13 +1342,109 @@ async function loadWorkspaceSnapshot(fileList) {
   }
 }
 
-function buildCurrentFormationRequest() {
+function invalidateMaster() {
+  state.masterContract = null;
+  state.masterRunId = null;
+  state.masterSyncKey = state.formationRunId;
+  state.masterRevision += 1;
+  state.masterRecoveryAllowed = false;
+}
+
+function renderMaster() {
+  const master = state.masterContract;
+  const locked = inputsLocked() || state.formationBusy;
+  elements["start-master"].disabled = !isOcrComplete() || locked || Boolean(state.targetSessionPromise);
+  elements["load-master"].disabled = locked;
+  elements["master-file-input"].disabled = locked;
+  elements["download-master"].disabled = !master;
+  elements["download-master-text"].disabled = !master;
+  elements["master-details"].hidden = !master;
+  elements["master-approval"].hidden = !master || Boolean(master.approval);
+  elements["master-approver"].disabled = locked;
+  elements["approve-master"].disabled = locked || !master || Boolean(master.approval)
+    || !state.masterRunId || !elements["master-approver"].value.trim();
+  if (!master) {
+    elements["master-text"].value = "";
+    elements["master-status"].textContent = isOcrComplete()
+      ? "Подписанные документы распознаны. Сформируйте мастер-договор — драфт на этом этапе не нужен."
+      : "Завершите OCR, чтобы собрать мастер-договор, или загрузите ранее проверенный файл проекта.";
+    return;
+  }
+  const identity = master.payload.reconstructionScope.baseContract;
+  elements["master-status"].textContent = `Договор № ${identity.number} от ${identity.date}. `
+    + (master.approval ? `Проверил(а): ${master.approval.approver}. Готов к использованию с драфтом.` : "Редакция собрана. Требуется проверка человеком.");
+  if (elements["master-text"].value !== master.payload.currentContract) elements["master-text"].value = master.payload.currentContract;
+  elements["master-scope"].textContent = master.payload.signedDocuments.map((document) =>
+    `${document.order}. ${document.file.name} (${document.pages.length} стр.)`).join("\n")
+    + "\n\n" + master.payload.reconstructionScope.instruments.map((item) =>
+      `${item.sourceDocumentId}, стр. ${item.pages.join(", ")}: № ${item.agreementNumber} от ${item.agreementDate} — ${ { included: "применено", excluded: "исключено", unresolved: "требует проверки" }[item.decision] }. ${item.reason}`).join("\n");
+}
+
+async function syncRunMaster() {
+  const runId = state.formationRunId;
+  const runState = state.formationRun?.state;
+  const masterAvailable = ["awaiting-master-approval", "master-approved"].includes(runState?.status)
+    || (runState?.workflowStage === "agreement" && runState?.masterSha256);
+  if (!masterAvailable
+    || !state.masterRecoveryAllowed || state.masterSyncKey === runId || state.masterContract) return;
+  const revision = state.masterRevision;
+  const master = await workflowJson(`/runs/${encodeURIComponent(runId)}/master`);
+  await validateMasterContract(master, { requireApproval: false });
+  if (revision !== state.masterRevision || runId !== state.formationRunId) return;
+  state.masterContract = master;
+  state.masterRunId = runId;
+  state.masterSyncKey = runId;
+}
+
+async function loadMasterFile(file) {
+  if (!file || inputsLocked()) return;
+  state.loading = true;
+  setRunning(false);
+  try {
+    if (file.size > 128 * 1024 * 1024) throw new Error("Файл мастер-договора превышает 128 МБ.");
+    const master = await validateMasterContract(JSON.parse(await file.text()));
+    invalidateMaster();
+    state.masterContract = master;
+    setError("");
+  } catch (error) {
+    setError(`Не удалось загрузить мастер-договор: ${error.message}`);
+  } finally {
+    state.loading = false;
+    elements["master-file-input"].value = "";
+    setRunning(false);
+  }
+}
+
+async function approveMaster() {
+  if (!state.masterRunId || !state.masterContract || inputsLocked()) return;
+  const runId = state.masterRunId;
+  state.loading = true;
+  setRunning(false);
+  try {
+    const master = await workflowJson(`/runs/${encodeURIComponent(runId)}/approve-master`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approver: elements["master-approver"].value.trim(), masterSha256: state.masterContract.sha256 }),
+    });
+    state.masterContract = await validateMasterContract(master);
+    setError("");
+    if (state.formationRunId === runId) await refreshFormationRun();
+  } catch (error) {
+    setError(`Не удалось подтвердить мастер-договор: ${error.message}`);
+  } finally {
+    state.loading = false;
+    setRunning(false);
+  }
+}
+
+function buildCurrentFormationRequest(workflowStage = "agreement") {
+  if (workflowStage === "master") return buildFormationRequest({ ocrResult: buildDocumentResult(), workflowStage });
   if (!state.draftAgreement) {
     throw new TypeError("Загрузите предлагаемое дополнительное соглашение DOCX.");
   }
   const { file, sha256: draftSha256 } = state.draftAgreement;
   return buildFormationRequest({
-    ocrResult: buildDocumentResult(),
+    masterContract: state.masterContract,
+    workflowStage,
     draftAgreement: {
       name: file.name,
       size: file.size,
@@ -1621,6 +1738,14 @@ function renderFormationRun(job) {
   elements["review-round-label"].textContent = runState?.round
     ? `Раунд ${runState.round}. Отчёты обновляются после завершения всех рецензентов.`
     : "Отчёты появятся после формирования кандидата.";
+  const masterStage = runState?.workflowStage === "master";
+  elements["run-title"].textContent = masterStage ? "Подготовка мастер-договора" : "Формирование и межмодельное ревью";
+  elements["run-stages"].hidden = masterStage;
+  elements["formation-run-card"].querySelector(".approval-notice").hidden = masterStage;
+  elements["reviewers-grid"].closest(".review-section").hidden = masterStage;
+  elements["approve-candidate"].closest(".run-actions").querySelectorAll("button, label").forEach((element) => {
+    element.hidden = masterStage && element.id !== "download-diagnostics";
+  });
   renderRunStages(runState);
   renderReviewers(run);
   renderGigacodeStatus(run?.gigacodeStatus ?? null);
@@ -1657,6 +1782,10 @@ function renderFormationRun(job) {
         : runState.blocker ?? "Автоматический контур остановлен до создания кандидата.",
       "failed",
     );
+  } else if (status === "awaiting-master-approval") {
+    setRunStatus("Мастер-договор готов к проверке", "Проверьте текст и историю источников в карточке мастер-договора, затем подтвердите редакцию.");
+  } else if (status === "master-approved") {
+    setRunStatus("Мастер-договор подтверждён", "Сохраните файл проекта или переходите к подготовке рекомендованного допсоглашения.", "good");
   } else if (awaitingApproval) {
     setRunStatus(
       "Нужна проверка",
@@ -1705,6 +1834,7 @@ async function pollFormationJob() {
     const job = await workflowJson(`/jobs/${encodeURIComponent(jobId)}`);
     if (state.formationJobId !== jobId) return job;
     renderFormationRun(job);
+    await syncRunMaster();
     if (job.status === "running") {
       state.formationBusy = true;
       scheduleFormationPoll();
@@ -1714,7 +1844,7 @@ async function pollFormationJob() {
     state.formationBusy = false;
     if (
       job.status === "failed"
-      || ["blocked", "failed", "finalized"].includes(job.run?.state?.status)
+      || ["blocked", "failed", "finalized", "awaiting-master-approval", "master-approved"].includes(job.run?.state?.status)
     ) {
       setFormationJobId(null);
     }
@@ -1754,6 +1884,7 @@ async function restoreFormationJob() {
       runId: latest.runId,
       run: latest.run,
     });
+    await syncRunMaster();
     updateFormationState();
     setRunning(false);
     return;
@@ -1761,9 +1892,10 @@ async function restoreFormationJob() {
   setFormationJobId(job.jobId);
   state.formationBusy = job.status === "running";
   renderFormationRun(job);
+  await syncRunMaster();
   if (
     job.status === "failed"
-    || ["blocked", "failed", "finalized"].includes(job.run?.state?.status)
+    || ["blocked", "failed", "finalized", "awaiting-master-approval", "master-approved"].includes(job.run?.state?.status)
   ) {
     setFormationJobId(null);
   }
@@ -1800,8 +1932,8 @@ function resumeFormationStatusUpdates() {
   });
 }
 
-async function launchFormation() {
-  if (!isFormationReady() || state.formationBusy || state.formationJobId) return;
+async function launchFormation(workflowStage = "agreement") {
+  if ((workflowStage === "master" ? !isOcrComplete() : !isFormationReady()) || inputsLocked() || state.formationBusy) return;
   if (!state.targetSession?.target?.ready) {
     await initializeTargetSession();
     if (!state.targetSession?.target?.ready) {
@@ -1812,7 +1944,11 @@ async function launchFormation() {
       return;
     }
   }
-  const formationRequest = buildCurrentFormationRequest();
+  const formationRequest = buildCurrentFormationRequest(workflowStage);
+  if (workflowStage === "master") {
+    invalidateMaster();
+    state.masterRecoveryAllowed = true;
+  }
   let stageId = null;
   state.formationBusy = true;
   setFormationJobId("preparing");
@@ -1856,15 +1992,17 @@ async function launchFormation() {
       );
     }
 
-    setRunStatus("Загрузка входов", `Передаётся предлагаемое допсоглашение: ${state.draftAgreement.file.name}`);
-    await workflowFetch(`/staging/${encodeURIComponent(stageId)}/draft`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": state.draftAgreement.file.type
-          || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      },
-      body: state.draftAgreement.file,
-    });
+    if (formationRequest.inputs.newAgreementEdition) {
+      setRunStatus("Загрузка входов", `Передаётся предлагаемое допсоглашение: ${state.draftAgreement.file.name}`);
+      await workflowFetch(`/staging/${encodeURIComponent(stageId)}/draft`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": state.draftAgreement.file.type
+            || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        body: state.draftAgreement.file,
+      });
+    }
 
     setRunStatus("Проверка SHA-256", "Файлы сверяются с результатом OCR и копируются в неизменяемый case.");
     const prepared = await workflowJson(`/staging/${encodeURIComponent(stageId)}/prepare`, {
@@ -1900,7 +2038,7 @@ async function refreshFormationRun() {
     runId: state.formationRunId,
     run,
   });
-  if (["blocked", "failed", "finalized"].includes(run.state?.status)) {
+  if (["blocked", "failed", "finalized", "awaiting-master-approval", "master-approved"].includes(run.state?.status)) {
     setFormationJobId(null);
     updateFormationState();
     setRunning(false);
@@ -2067,6 +2205,18 @@ elements["download-text"].addEventListener("click", () => {
     setError(error.message ?? String(error));
   }
 });
+elements["start-master"].addEventListener("click", () => launchFormation("master").catch((error) => setError(error.message)));
+elements["load-master"].addEventListener("click", () => elements["master-file-input"].click());
+elements["master-file-input"].addEventListener("change", (event) => loadMasterFile(event.target.files[0]));
+elements["master-approver"].addEventListener("input", renderMaster);
+elements["approve-master"].addEventListener("click", () => approveMaster().catch((error) => setError(error.message)));
+elements["download-master"].addEventListener("click", () => {
+  if (state.masterContract) download("contract.master-contract.json", "application/json", JSON.stringify(state.masterContract, null, 2) + "\n");
+});
+elements["download-master-text"].addEventListener("click", () => {
+  if (state.masterContract) download("master-contract.txt", "text/plain;charset=utf-8", state.masterContract.payload.currentContract);
+});
+
 elements["start-formation"].addEventListener("click", () => {
   launchFormation().catch((error) => {
     console.error(error);

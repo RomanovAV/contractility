@@ -15,16 +15,21 @@ import { prepareCase, validateDocumentId, validateFormationRequest } from "./tar
 import { loadTargetConfig } from "./target/config.mjs";
 import {
   atomicWriteJson,
+  atomicWriteText,
   ensurePrivateDirectory,
   readJson,
   sha256File,
 } from "./target/fs-utils.mjs";
 import {
   approveRun,
+  approveMasterRun,
+  readRunMaster,
   createAndRun,
   finalizeRun,
   verifyRun,
 } from "./target/runner.mjs";
+
+import { validateMasterContract } from "../public/master-contract.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const JSON_LIMIT = 128 * 1024 * 1024;
@@ -170,6 +175,8 @@ function stateLabel(status) {
     created: "Создание запуска",
     "inputs-verified": "Входы проверены",
     "reconstructing-contract": "Реконструкция действующего договора",
+    "awaiting-master-approval": "Мастер-договор ожидает проверки",
+    "master-approved": "Мастер-договор подтверждён",
     "planning-changes": "Планирование изменений",
     "applying-changes": "Применение изменений к DOCX",
     "candidate-created": "Кандидат сформирован",
@@ -494,6 +501,7 @@ export function createUiWorkflowApi({
     let formationRequest;
     try {
       formationRequest = validateFormationRequest(body.formationRequest);
+      if (formationRequest.inputs.masterContract) await validateMasterContract(formationRequest.inputs.masterContract);
     } catch (error) {
       throw new HttpError(400, error.message);
     }
@@ -511,7 +519,7 @@ export function createUiWorkflowApi({
         sha256: document.file.sha256,
         uploaded: false,
       })),
-      draft: {
+      draft: formationRequest.workflowStage === "master" ? null : {
         name: formationRequest.inputs.newAgreementEdition.file.name,
         sha256: formationRequest.inputs.newAgreementEdition.file.sha256,
         uploaded: false,
@@ -542,6 +550,7 @@ export function createUiWorkflowApi({
 
   async function uploadDraft(request, response, stageId) {
     const manifest = await stagingManifest(stageId);
+    if (!manifest.draft) throw new HttpError(409, "Этап мастер-договора не использует драфт.");
     const stageDirectory = safeJoin(stagingRoot, stageId);
     const result = await receiveFile(
       request,
@@ -559,7 +568,7 @@ export function createUiWorkflowApi({
     const manifest = await stagingManifest(stageId);
     if (
       manifest.signedDocuments.some((document) => !document.uploaded)
-      || !manifest.draft.uploaded
+      || (manifest.draft && !manifest.draft.uploaded)
     ) {
       throw new HttpError(409, "Не все исходные файлы загружены.");
     }
@@ -569,7 +578,7 @@ export function createUiWorkflowApi({
     ]));
     const prepared = await prepareCase({
       requestPath: path.join(stageDirectory, "formation-request.json"),
-      draftPath: path.join(stageDirectory, "new-edition.docx"),
+      draftPath: manifest.draft ? path.join(stageDirectory, "new-edition.docx") : null,
       sources,
       outputRoot: caseRoot,
     });
@@ -718,6 +727,17 @@ export function createUiWorkflowApi({
   async function resolveDownload(runId, kind) {
     const { config, runDirectory } = await requireRunDirectory(runId);
     const state = await readJson(path.join(runDirectory, "state.json"));
+    if (["master", "master-text"].includes(kind)) {
+      const master = await readRunMaster(runDirectory);
+      if (kind === "master") {
+        const filePath = path.join(runDirectory, "exports/master-contract.json");
+        await atomicWriteJson(filePath, master);
+        return { filePath, contentType: "application/json; charset=utf-8", downloadName: "contract.master-contract.json" };
+      }
+      const textPath = path.join(runDirectory, "master-contract.txt");
+      await atomicWriteText(textPath, master.payload.currentContract);
+      return { filePath: textPath, contentType: "text/plain; charset=utf-8", downloadName: "master-contract.txt" };
+    }
     if (kind === "candidate") {
       const fallbackCandidatePath = Number.isInteger(state.round) && state.round > 0
         ? `rounds/${String(state.round).padStart(2, "0")}/candidate.docx`
@@ -901,6 +921,17 @@ export function createUiWorkflowApi({
         const runId = segments[3];
         if (segments.length === 4 && request.method === "GET") {
           await sendRun(response, runId);
+          return true;
+        }
+        if (segments.length === 5 && segments[4] === "master" && request.method === "GET") {
+          const { runDirectory } = await requireRunDirectory(runId);
+          sendJson(response, securityHeaders, 200, await readRunMaster(runDirectory));
+          return true;
+        }
+        if (segments.length === 5 && segments[4] === "approve-master" && request.method === "POST") {
+          const { runDirectory } = await requireRunDirectory(runId);
+          const body = await readJsonBody(request, 64 * 1024);
+          sendJson(response, securityHeaders, 200, await approveMasterRun({ runDirectory, approver: body.approver, masterSha256: body.masterSha256 }));
           return true;
         }
         if (segments.length === 5 && segments[4] === "approve" && request.method === "POST") {

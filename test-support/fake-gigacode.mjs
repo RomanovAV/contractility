@@ -254,6 +254,7 @@ if (model === "missing-model") {
     path.join(artifacts, "change-plan.json"),
     `${JSON.stringify({ operations: [] }, null, 2)}\n`,
   );
+  if (mode === "mutate-master") await writeFile(path.join(artifacts, "current-contract.md"), "tampered");
   emit({ status: "change-plan-ready" });
 } else if (prompt.includes("apply the prepared change plan to the retained DOCX package")) {
   const task = JSON.parse(

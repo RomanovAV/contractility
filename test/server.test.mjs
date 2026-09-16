@@ -52,11 +52,11 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="draft-file-input"[^>]*\.docx/);
   assert.match(indexHtml, /id="load-workspace-button"/);
   assert.match(indexHtml, /id="workspace-file-input"[^>]*\.contractility\.json/);
-  assert.match(indexHtml, /Предлагаемое допсоглашение/);
-  assert.match(indexHtml, /Финальное соглашение/);
+  assert.match(indexHtml, /Мастер-договор/);
+  assert.match(indexHtml, /Рекомендованное допсоглашение/);
   assert.match(indexHtml, /id="start-formation"/);
   assert.match(indexHtml, /id="formation-run-card"/);
-  assert.match(indexHtml, /Пять рецензентов/);
+  assert.match(indexHtml, /Рецензенты/);
   assert.match(indexHtml, /id="approve-candidate"/);
   assert.match(indexHtml, /id="download-diagnostics"/);
   assert.match(indexHtml, /id="download-final"/);
@@ -561,4 +561,95 @@ test("workflow API protects mutations and prepares a verified local case", async
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   );
   assert.deepEqual(Buffer.from(await finalResponse.arrayBuffer()), Buffer.from("candidate docx"));
+});
+
+test("workflow API prepares a master without draft and accepts only an approved portable baseline", async (context) => {
+  const { createMasterContract } = await import("../public/master-contract.mjs");
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), "contractility-master-api-"));
+  context.after(() => rm(dataRoot, { recursive: true, force: true }));
+  const targetConfigPath = path.join(dataRoot, "target.json");
+  await writeFile(targetConfigPath, JSON.stringify({
+    schemaVersion: "contractility.target-config.v1",
+    gigacode: { command: process.execPath },
+    models: { producer: "p", synthesizer: "s", reviewers: ["review-a", "review-b", "review-c"].map((id) => ({ id, model: id, focus: id })) },
+    storage: { runRoot: path.join(dataRoot, "runs") },
+  }));
+  const server = await startServer({ port: 0, workflowOptions: { dataRoot, targetConfigPath } });
+  context.after(() => stopServer(server));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const session = await (await fetch(`${origin}/api/workflow/session`)).json();
+  const headers = { Origin: origin, "X-Contractility-Token": session.token, "Content-Type": "application/json" };
+  const api = (route, options = {}) => fetch(`${origin}/api/workflow${route}`, { headers, ...options });
+  const pdf = Buffer.from("%PDF fixture");
+  const document = { id: "document-1", order: 1, role: "contract", complete: true,
+    file: { name: "contract.pdf", sha256: sha256(pdf) }, pages: [{ number: 1, text: "Contract No. 1 dated 01.01.2025" }] };
+  const request = { schemaVersion: "contractility.formation-request.v1", workflowStage: "master",
+    inputs: { signedDocuments: [document] }, rules: { requireHumanApprovalBeforeFinalization: true } };
+  const stagingResponse = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: request }) });
+  assert.equal(stagingResponse.status, 201);
+  const stage = await stagingResponse.json();
+  assert.equal(stage.manifest.draft, null);
+  const forbiddenDraft = await api(`/staging/${stage.stageId}/draft`, { method: "PUT", body: "not required" });
+  assert.equal(forbiddenDraft.status, 409);
+  await forbiddenDraft.arrayBuffer();
+  const missingSources = await api(`/staging/${stage.stageId}/prepare`, { method: "POST" });
+  assert.equal(missingSources.status, 409);
+  await missingSources.arrayBuffer();
+  const uploaded = await api(`/staging/${stage.stageId}/signed/document-1`, { method: "PUT", body: pdf });
+  assert.equal(uploaded.status, 200);
+  await uploaded.arrayBuffer();
+  const prepared = await api(`/staging/${stage.stageId}/prepare`, { method: "POST" });
+  assert.equal(prepared.status, 201);
+  await prepared.arrayBuffer();
+
+  const master = await createMasterContract({
+    currentContract: "Validated baseline with clause references and source evidence. ".repeat(4),
+    signedDocuments: [document],
+    reconstructionScope: { schemaVersion: "contractility.reconstruction-scope.v1",
+      baseContract: { sourceDocumentId: document.id, number: "1", date: "01.01.2025", page: 1, evidence: document.pages[0].text }, instruments: [] },
+  });
+  const runId = "run-master-api";
+  const runDirectory = path.join(dataRoot, "runs", runId);
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "master-contract.json"), JSON.stringify(master));
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({ status: "awaiting-master-approval", workflowStage: "master", masterSha256: master.sha256, runId }));
+  const projectDownload = await api(`/runs/${runId}/files/master`);
+  assert.equal(projectDownload.status, 200);
+  assert.deepEqual(await projectDownload.json(), master);
+  const textDownload = await api(`/runs/${runId}/files/master-text`);
+  assert.equal(await textDownload.text(), master.payload.currentContract);
+  const draft = Buffer.from("DOCX fixture");
+  const agreementRequest = { ...request, workflowStage: "agreement", inputs: { signedDocuments: [], masterContract: master,
+    newAgreementEdition: { file: { name: "draft.docx", sha256: sha256(draft), size: draft.length } } } };
+  const unapproved = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: agreementRequest }) });
+  assert.equal(unapproved.status, 400);
+  await unapproved.arrayBuffer();
+  const approval = await api(`/runs/${runId}/approve-master`, { method: "POST", body: JSON.stringify({ approver: "Test reviewer", masterSha256: master.sha256 }) });
+  assert.equal(approval.status, 200);
+  agreementRequest.inputs.masterContract = await approval.json();
+  const reusedResponse = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: agreementRequest }) });
+  assert.equal(reusedResponse.status, 201);
+  const reused = await reusedResponse.json();
+  assert.deepEqual(reused.manifest.signedDocuments, []);
+  const uploadedDraft = await api(`/staging/${reused.stageId}/draft`, { method: "PUT", body: draft });
+  assert.equal(uploadedDraft.status, 200);
+  await uploadedDraft.arrayBuffer();
+  const preparedAgreement = await api(`/staging/${reused.stageId}/prepare`, { method: "POST" });
+  assert.equal(preparedAgreement.status, 201);
+  await preparedAgreement.arrayBuffer();
+  // Master export also works from an agreement run, whose master is retained in its request.
+  const agreementRunId = "run-agreement-api";
+  const agreementRunDirectory = path.join(dataRoot, "runs", agreementRunId);
+  await mkdir(path.join(agreementRunDirectory, "input"), { recursive: true });
+  const retainedRequest = JSON.stringify(agreementRequest);
+  await writeFile(path.join(agreementRunDirectory, "input/formation-request.json"), retainedRequest);
+  await writeFile(path.join(agreementRunDirectory, "input-manifest.json"), JSON.stringify({ formationRequest: { sha256: sha256(retainedRequest) } }));
+  await writeFile(path.join(agreementRunDirectory, "state.json"), JSON.stringify({ status: "finalized", workflowStage: "agreement", runId: agreementRunId }));
+  const reusedDownload = await api(`/runs/${agreementRunId}/files/master`);
+  assert.equal(reusedDownload.status, 200);
+  assert.deepEqual(await reusedDownload.json(), agreementRequest.inputs.masterContract);
+  agreementRequest.inputs.masterContract.payload.currentContract += "changed";
+  const tampered = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: agreementRequest }) });
+  assert.equal(tampered.status, 400);
+  await tampered.arrayBuffer();
 });

@@ -11,6 +11,9 @@ import {
   sha256Text,
 } from "./fs-utils.mjs";
 
+import { validateMasterContract, validateMasterStructure } from "../../public/master-contract.mjs";
+import { validateReconstructionScope } from "./scope.mjs";
+
 const SAFE_DOCUMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,80}$/;
 
 export function validateDocumentId(value) {
@@ -24,7 +27,18 @@ export function validateFormationRequest(request) {
   if (request?.schemaVersion !== "contractility.formation-request.v1") {
     throw new TypeError("Ожидалась схема contractility.formation-request.v1.");
   }
-  const documents = request.inputs?.signedDocuments;
+  const stage = request.workflowStage ?? "full";
+  if (!["full", "master", "agreement"].includes(stage)) throw new TypeError("Неизвестный этап формирования.");
+  const master = request.inputs?.masterContract;
+  if (stage === "agreement") validateMasterStructure(master);
+  else if (master) throw new TypeError("Мастер-договор допустим только на этапе подготовки ДС.");
+  if (stage === "agreement" && (!Array.isArray(request.inputs?.signedDocuments) || request.inputs.signedDocuments.length !== 0)) {
+    throw new TypeError("Используйте проверенный мастер-договор без нового комплекта PDF.");
+  }
+  if (stage === "master" && request.inputs?.newAgreementEdition) {
+    throw new TypeError("Драфт не входит в этап подготовки мастер-договора.");
+  }
+  const documents = master?.payload.signedDocuments ?? request.inputs?.signedDocuments;
   const draft = request.inputs?.newAgreementEdition?.file;
   if (!Array.isArray(documents) || documents.length === 0) {
     throw new TypeError("В запросе отсутствуют подписанные документы.");
@@ -52,9 +66,10 @@ export function validateFormationRequest(request) {
     }
     ids.add(document.id);
   });
-  if (!draft?.name || !draft?.sha256 || !Number.isFinite(draft.size)) {
+  if (stage !== "master" && (!draft?.name || !draft?.sha256 || !Number.isFinite(draft.size))) {
     throw new TypeError("В запросе отсутствует идентичность предлагаемого допсоглашения DOCX.");
   }
+  if (master) validateReconstructionScope(master.payload.reconstructionScope, { documents: documents.map((document) => ({ ...document, pageCount: document.pages.length })) });
   if (!request.rules?.requireHumanApprovalBeforeFinalization) {
     throw new TypeError("Финализация без ручного подтверждения запрещена.");
   }
@@ -64,12 +79,14 @@ export function validateFormationRequest(request) {
 export async function prepareCase({
   requestPath,
   draftPath,
-  sources,
+  sources = {},
   outputRoot,
 }) {
   await requireRegularFile(requestPath);
-  await requireRegularFile(draftPath);
   const request = validateFormationRequest(await readJson(requestPath));
+  const masterOnly = request.workflowStage === "master";
+  if (!masterOnly) await requireRegularFile(draftPath);
+  if (request.inputs.masterContract) await validateMasterContract(request.inputs.masterContract);
   const expectedDocuments = request.inputs.signedDocuments;
   const sourceIds = new Set(Object.keys(sources));
   if (
@@ -79,7 +96,7 @@ export async function prepareCase({
     throw new TypeError("Нужно передать ровно один --source id=path для каждого подписанного PDF.");
   }
   const requestSha256 = await sha256File(requestPath);
-  const draftExpected = request.inputs.newAgreementEdition.file.sha256;
+  const draftExpected = request.inputs.newAgreementEdition?.file.sha256 ?? "master";
   const caseId = `case-${sha256Text(`${requestSha256}:${draftExpected}`).slice(0, 20)}`;
   const caseDirectory = path.resolve(outputRoot, caseId);
   await ensurePrivateDirectory(caseDirectory);
@@ -111,11 +128,11 @@ export async function prepareCase({
       originalName: document.file.name,
     });
   }
-  if (!draftPath.toLowerCase().endsWith(".docx")) {
+  if (!masterOnly && !draftPath.toLowerCase().endsWith(".docx")) {
     throw new TypeError("Предлагаемое допсоглашение должно быть DOCX.");
   }
   const draftDestination = path.join(draftDirectory, "new-edition.docx");
-  await copyVerified(draftPath, draftDestination, draftExpected);
+  if (!masterOnly) await copyVerified(draftPath, draftDestination, draftExpected);
   const manifest = {
     schemaVersion: "contractility.case-manifest.v1",
     caseId,
@@ -125,7 +142,8 @@ export async function prepareCase({
       sha256: requestSha256,
     },
     signedDocuments: signed,
-    newAgreementEdition: {
+    workflowStage: request.workflowStage ?? "full",
+    newAgreementEdition: masterOnly ? null : {
       path: "inputs/draft/new-edition.docx",
       sha256: draftExpected,
       originalName: request.inputs.newAgreementEdition.file.name,
@@ -151,8 +169,19 @@ export async function verifyCase(caseDirectory) {
       throw new Error(`Источник ${document.id} изменён после подготовки case.`);
     }
   }
-  const draftPath = resolveWithinDirectory(caseDirectory, manifest.newAgreementEdition.path);
-  if (await sha256File(draftPath) !== manifest.newAgreementEdition.sha256) {
+  const request = validateFormationRequest(await readJson(requestPath));
+  if (request.inputs.masterContract) await validateMasterContract(request.inputs.masterContract);
+  if ((manifest.workflowStage ?? "full") !== (request.workflowStage ?? "full")) throw new Error("Этап case не совпадает с запросом.");
+  const requestDraft = request.inputs.newAgreementEdition?.file;
+  if (Boolean(manifest.newAgreementEdition) !== Boolean(requestDraft)
+    || (requestDraft && manifest.newAgreementEdition.sha256 !== requestDraft.sha256)
+    || manifest.signedDocuments.length !== request.inputs.signedDocuments.length
+    || manifest.signedDocuments.some((document, index) => document.id !== request.inputs.signedDocuments[index].id
+      || document.sha256 !== request.inputs.signedDocuments[index].file.sha256)) {
+    throw new Error("Манифест case не соответствует входам запроса.");
+  }
+  const draftPath = manifest.newAgreementEdition ? resolveWithinDirectory(caseDirectory, manifest.newAgreementEdition.path) : null;
+  if (draftPath && await sha256File(draftPath) !== manifest.newAgreementEdition.sha256) {
     throw new Error("Предлагаемое допсоглашение DOCX изменено после подготовки case.");
   }
   return { manifest, requestPath, draftPath };

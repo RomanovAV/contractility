@@ -15,6 +15,7 @@ import {
 } from "./target/gigacode.mjs";
 import {
   approveRun,
+  approveMasterRun,
   createAndRun,
   finalizeRun,
   verifyRun,
@@ -34,7 +35,8 @@ function usage() {
 
 Commands:
   doctor --config PATH [--smoke]
-  prepare --request PATH --draft PATH --source ID=PATH... --out DIR
+  prepare --request PATH [--draft PATH] [--source ID=PATH...] --out DIR
+  approve-master --run DIR --master-sha256 HASH --approver NAME
   run --case DIR --config PATH
   status --run DIR [--json]
   approve --run DIR --candidate-sha256 HASH --findings-sha256 HASH --approver NAME
@@ -161,7 +163,7 @@ async function main() {
   if (command === "prepare") {
     const result = await prepareCase({
       requestPath: path.resolve(required(options, "request")),
-      draftPath: path.resolve(required(options, "draft")),
+      draftPath: options.draft ? path.resolve(options.draft) : null,
       sources: sourceMap(options.source),
       outputRoot: path.resolve(required(options, "out")),
     });
@@ -180,6 +182,14 @@ async function main() {
   if (command === "status") {
     const state = await readJson(path.join(path.resolve(required(options, "run")), "state.json"));
     console.log(options.json ? JSON.stringify(state) : JSON.stringify(state, null, 2));
+    return;
+  }
+  if (command === "approve-master") {
+    console.log(JSON.stringify(await approveMasterRun({
+      runDirectory: path.resolve(required(options, "run")),
+      approver: required(options, "approver"),
+      masterSha256: required(options, "master-sha256"),
+    }), null, 2));
     return;
   }
   if (command === "approve") {

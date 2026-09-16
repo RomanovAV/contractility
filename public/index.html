@@ -23,8 +23,8 @@
       <section class="intro">
         <div>
           <p class="eyebrow">Подготовка дополнительного соглашения</p>
-          <h1>Соберём действующую редакцию договора перед новыми изменениями</h1>
-          <p class="intro-copy">Исходный договор и все подписанные допсоглашения обрабатываются по порядку. Предлагаемое допсоглашение в Word задаёт требуемые изменения и форму итогового документа, но не считается подписанным источником.</p>
+          <h1>Мастер-договор, затем рекомендованное допсоглашение</h1>
+          <p class="intro-copy">Сначала соберите и проверьте действующую редакцию из договора и подписанных допсоглашений — или загрузите проверенный мастер-договор. Затем добавьте драфт в Word для подготовки рекомендованного допсоглашения.</p>
         </div>
         <div class="privacy-card">
           <span class="privacy-icon" aria-hidden="true">⌁</span>
@@ -33,10 +33,8 @@
       </section>
 
       <ol class="workflow-strip" aria-label="Порядок формирования">
-        <li><span>01</span><strong>Исходный договор</strong><small>Подписанный PDF</small></li>
-        <li><span>02</span><strong>История изменений</strong><small>Подписанные PDF по порядку</small></li>
-        <li><span>03</span><strong>Предлагаемое ДС</strong><small>Основа результата</small></li>
-        <li><span>04</span><strong>Финальное соглашение</strong><small>После проверки изменений</small></li>
+        <li><span>01</span><strong>Мастер-договор</strong><small>Сборка, проверка и сохранение действующей редакции</small></li>
+        <li><span>02</span><strong>Рекомендованное допсоглашение</strong><small>Проверенный мастер-договор + драфт DOCX</small></li>
       </ol>
 
       <section class="setup-card" aria-labelledby="source-title">
@@ -60,18 +58,6 @@
         </label>
 
         <div id="file-summary" class="file-summary" aria-live="polite" hidden></div>
-
-        <div class="draft-section" aria-labelledby="draft-title">
-          <div class="section-heading compact-heading">
-            <div><span class="step-number">02</span><div><h2 id="draft-title">Предлагаемое допсоглашение</h2><p>Загрузите Word-файл с требуемыми изменениями. Его форма и оформление станут основой итогового документа.</p></div></div>
-          </div>
-          <label id="draft-drop-zone" class="draft-drop-zone">
-            <input id="draft-file-input" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
-            <span class="docx-badge" aria-hidden="true">DOCX</span>
-            <span><strong>Выбрать предлагаемое допсоглашение</strong><small>Источник требований и шаблон результата; не считается подписанным документом</small></span>
-          </label>
-          <div id="draft-summary" class="draft-summary" aria-live="polite" hidden></div>
-        </div>
 
         <div class="settings-grid">
           <label>
@@ -152,15 +138,54 @@
         </section>
       </section>
 
+      <section id="master-card" class="setup-card" aria-labelledby="master-title">
+        <div class="section-heading">
+          <div><span class="step-number">01</span><div><h2 id="master-title">Мастер-договор</h2><p>Полная действующая редакция с учётом подписанных допсоглашений.</p></div></div>
+        </div>
+        <p id="master-status" aria-live="polite">Завершите OCR, чтобы собрать мастер-договор, или загрузите ранее проверенный файл проекта.</p>
+        <div class="master-actions">
+          <button id="start-master" class="primary-button" type="button" disabled>Сформировать мастер-договор</button>
+          <button id="load-master" class="secondary-button" type="button">Загрузить проверенный мастер-договор</button>
+          <input id="master-file-input" type="file" accept="application/json,.json,.master-contract.json" hidden>
+          <button id="download-master" class="secondary-button" type="button" disabled>Скачать файл проекта</button>
+          <button id="download-master-text" class="secondary-button" type="button" disabled>Скачать текст</button>
+        </div>
+        <div id="master-details" hidden>
+          <label for="master-text">Текст мастер-договора для проверки</label>
+          <textarea id="master-text" readonly spellcheck="false"></textarea>
+          <details><summary>Источники и применённые изменения</summary><pre id="master-scope"></pre></details>
+          <div id="master-approval" class="master-actions">
+            <label class="approver-field"><span>Мастер-договор проверил(а)</span><input id="master-approver" type="text" autocomplete="name" placeholder="ФИО проверяющего"></label>
+            <button id="approve-master" class="primary-button" type="button" disabled>Подтвердить мастер-договор</button>
+          </div>
+          <p class="approval-notice">Перед подтверждением проверьте текст, применённые и исключённые соглашения и незаполненные поля. Отметка проверки сохраняется с файлом проекта и не является электронной подписью.</p>
+        </div>
+      </section>
+
+      <section class="setup-card" aria-labelledby="draft-title">
+        <div class="draft-section" aria-labelledby="draft-title">
+          <div class="section-heading compact-heading">
+            <div><span class="step-number">02</span><div><h2 id="draft-title">Драфт дополнительного соглашения</h2><p>Загрузите Word-файл с требуемыми изменениями. Его форма и оформление станут основой итогового документа.</p></div></div>
+          </div>
+          <label id="draft-drop-zone" class="draft-drop-zone">
+            <input id="draft-file-input" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
+            <span class="docx-badge" aria-hidden="true">DOCX</span>
+            <span><strong>Выбрать предлагаемое допсоглашение</strong><small>Источник требований и шаблон результата; не считается подписанным документом</small></span>
+          </label>
+          <div id="draft-summary" class="draft-summary" aria-live="polite" hidden></div>
+        </div>
+
+      </section>
+
       <section id="export-card" class="export-card" hidden>
         <div>
-          <p class="eyebrow">Следующий этап</p>
-          <h2>Сформировать и проверить допсоглашение</h2>
-          <p id="formation-status">Завершите OCR и загрузите предлагаемое допсоглашение DOCX.</p>
+          <p class="eyebrow">Этап 2</p>
+          <h2>Рекомендованное допсоглашение</h2>
+          <p id="formation-status">Подтвердите мастер-договор и загрузите драфт DOCX.</p>
           <p id="target-status-note" class="target-status-note">Проверяется готовность GigaCode…</p>
         </div>
         <div class="export-actions">
-          <button id="start-formation" class="primary-button" type="button" disabled>Запустить формирование</button>
+          <button id="start-formation" class="primary-button" type="button" disabled>Сформировать рекомендованное ДС</button>
           <button id="save-workspace" class="secondary-button" type="button" disabled>Сохранить сессию</button>
           <button id="download-json" class="secondary-button" type="button" disabled>Скачать пакет JSON</button>
           <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
@@ -171,7 +196,7 @@
         <div class="run-heading">
           <div>
             <p class="eyebrow">Автоматический контур</p>
-            <h2>Формирование и межмодельное ревью</h2>
+            <h2 id="run-title">Формирование и межмодельное ревью</h2>
             <p id="run-detail">Подготавливается защищённый локальный запуск.</p>
           </div>
           <span id="run-status-badge" class="run-status-badge">Подготовка</span>
@@ -188,8 +213,8 @@
 
         <ol id="run-stages" class="run-stages" aria-label="Этапы формирования">
           <li data-run-stage="inputs"><span>01</span><strong>Проверка входов</strong><small>PDF, DOCX и SHA-256</small></li>
-          <li data-run-stage="candidate"><span>02</span><strong>Кандидат</strong><small>Реконструкция договора</small></li>
-          <li data-run-stage="review"><span>03</span><strong>Пять рецензентов</strong><small>Параллельное ревью</small></li>
+          <li data-run-stage="candidate"><span>02</span><strong>Кандидат</strong><small>Применение драфта к мастер-договору</small></li>
+          <li data-run-stage="review"><span>03</span><strong>Рецензенты</strong><small>Параллельное ревью</small></li>
           <li data-run-stage="approval"><span>04</span><strong>Подтверждение</strong><small>Проверка человеком</small></li>
           <li data-run-stage="final"><span>05</span><strong>Финал</strong><small>Проверенный DOCX</small></li>
         </ol>

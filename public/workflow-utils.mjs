@@ -1,3 +1,4 @@
+import { validateMasterStructure } from "./master-contract.mjs";
 import { createTextExport } from "./ocr-utils.mjs";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -26,13 +27,17 @@ export function validateDraftAgreementFile(file) {
 
 export function formationLaunchAvailability({
   ocrComplete,
+  masterReady,
   draftReady,
   targetReady,
   targetChecking,
   formationBusy,
   formationJobActive,
 }) {
-  if (!ocrComplete) {
+  if (masterReady === false) {
+    return { enabled: false, refreshTargetBeforeLaunch: false, reason: "Сначала сформируйте и подтвердите мастер-договор или загрузите проверенный." };
+  }
+  if (!ocrComplete && !masterReady) {
     return {
       enabled: false,
       refreshTargetBeforeLaunch: false,
@@ -185,19 +190,25 @@ export function createSemanticSignedDocuments(documents) {
 export function buildFormationRequest({
   ocrResult,
   draftAgreement,
+  masterContract,
+  workflowStage = masterContract ? "agreement" : "full",
   createdAt = new Date().toISOString(),
 }) {
-  requireCompleteOcr(ocrResult);
-  if (!draftAgreement?.sha256 || !draftAgreement?.name) {
+  if (!["master", "agreement", "full"].includes(workflowStage)) throw new TypeError("Неизвестный этап формирования.");
+  if (workflowStage === "agreement" || masterContract) validateMasterStructure(masterContract);
+  else requireCompleteOcr(ocrResult);
+  if (workflowStage !== "master" && (!draftAgreement?.sha256 || !draftAgreement?.name)) {
     throw new TypeError("Для формирования требуется предлагаемое дополнительное соглашение DOCX.");
   }
 
   return {
     schemaVersion: "contractility.formation-request.v1",
     createdAt,
+    workflowStage,
     inputs: {
-      signedDocuments: createSemanticSignedDocuments(ocrResult.documents),
-      newAgreementEdition: {
+      signedDocuments: masterContract ? [] : createSemanticSignedDocuments(ocrResult.documents),
+      ...(masterContract ? { masterContract } : {}),
+      ...(workflowStage === "master" ? {} : { newAgreementEdition: {
         role: "proposed-additional-agreement",
         file: {
           name: draftAgreement.name,
@@ -207,7 +218,7 @@ export function buildFormationRequest({
         },
         contentIncluded: false,
         handling: "Передать исходный DOCX отдельным файлом и проверить SHA-256 перед обработкой.",
-      },
+      } }),
     },
     workflow: [
       {
@@ -230,7 +241,7 @@ export function buildFormationRequest({
         action: "generate-final-agreement",
         instruction: "Создать финальное дополнительное соглашение на основе формы предлагаемого DOCX, полностью покрывающее все заявленные изменения и необходимые согласующие корректировки.",
       },
-    ],
+    ].filter((step) => workflowStage === "master" ? step.order <= 2 : workflowStage === "agreement" ? step.order >= 3 : true),
     rules: {
       amendmentOrder: "strict-input-order",
       conflictResolution: "later-signed-amendment-wins",
@@ -260,16 +271,21 @@ export function buildFormationRequest({
       requireEvidenceForEveryChange: true,
       requireHumanApprovalBeforeFinalization: true,
     },
-    expectedOutput: {
+    expectedOutput: workflowStage === "master" ? {
+      currentContractEdition: "Полная действующая редакция после всех подписанных изменений.",
+      reconstructionScope: "История применённых, исключённых и неподтверждённых соглашений со ссылками на источники.",
+      masterContractProject: "Переносимый файл проекта с текстом, OCR-источниками и отдельной отметкой проверки человеком.",
+    } : {
       currentContractEdition: "Полная действующая редакция после всех подписанных изменений.",
       changeRegister: "Операции с источником, пунктом назначения и уровнем уверенности.",
       unresolvedIssues: "Любые неподтверждённые значения остаются пустыми, помечаются для заполнения человеком и не останавливают формирование.",
       finalAgreementDocx: "Финальный DOCX в форме предлагаемого дополнительного соглашения, покрывающий все заявленные изменения.",
     },
     provenance: {
-      ocrSchemaVersion: ocrResult.schemaVersion,
-      ocrCreatedAt: ocrResult.createdAt,
-      sourceDocumentCount: ocrResult.documents.length,
+      ocrSchemaVersion: ocrResult?.schemaVersion ?? null,
+      ocrCreatedAt: ocrResult?.createdAt ?? null,
+      sourceDocumentCount: masterContract?.payload.signedDocuments.length ?? ocrResult.documents.length,
+      ...(masterContract ? { masterSha256: masterContract.sha256 } : {}),
     },
   };
 }
@@ -278,7 +294,8 @@ export function createFormationTextExport(formationRequest) {
   const workflow = formationRequest.workflow
     .map((step) => `${step.order}. ${step.instruction}`)
     .join("\n");
-  const draft = formationRequest.inputs.newAgreementEdition.file;
+  const draft = formationRequest.inputs.newAgreementEdition?.file;
+  const master = formationRequest.inputs.masterContract;
   const sourceText = createTextExport({
     documents: formationRequest.inputs.signedDocuments,
   }).trimEnd();
@@ -286,9 +303,9 @@ export function createFormationTextExport(formationRequest) {
     "######## ЗАДАНИЕ НА ФОРМИРОВАНИЕ ДОПОЛНИТЕЛЬНОГО СОГЛАШЕНИЯ ########",
     workflow,
     "",
-    `Предлагаемое дополнительное соглашение DOCX: ${draft.name}`,
-    `SHA-256 DOCX: ${draft.sha256}`,
-    "DOCX передаётся отдельным файлом и не является подписанным документом.",
+    ...(draft ? [`Предлагаемое дополнительное соглашение DOCX: ${draft.name}`, `SHA-256 DOCX: ${draft.sha256}`] : []),
+    ...(master ? [`Мастер-договор SHA-256: ${master.sha256}`, master.payload.currentContract] : []),
+    ...(draft ? ["DOCX передаётся отдельным файлом и не является подписанным документом."] : []),
     "",
     "######## РАСПОЗНАННЫЕ ПОДПИСАННЫЕ ДОКУМЕНТЫ ########",
     sourceText,

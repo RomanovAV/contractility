@@ -60,3 +60,11 @@ Rules:
 - do not open, create, modify, or repack `candidate.docx`; it is the immutable
   pre-synthesis baseline. Modify only `package/` and required JSON artifacts.
   The deterministic orchestrator validates and repacks the candidate.
+
+Validated master contract policy:
+When task.policy.currentContractPolicy is `validated-master-read-only`, the supplied
+`artifacts/current-contract.md` and `artifacts/reconstruction-scope.json` are the
+human-validated baseline. Do not reconstruct, reapply historical amendments, or
+modify either file. Use that exact baseline to assess and implement the proposed
+agreement. Report any baseline concern explicitly for a separate human review;
+never silently correct the master during agreement formation.

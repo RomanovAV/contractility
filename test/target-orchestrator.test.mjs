@@ -24,6 +24,8 @@ import {
 } from "../src/target/gigacode.mjs";
 import {
   approveRun,
+  approveMasterRun,
+  readRunMaster,
   createAndRun,
   finalizeRun,
   parseProducerStatus,
@@ -1574,4 +1576,60 @@ test("review loop reports every synthesis session after format retries are exhau
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }
+});
+
+
+test("master stage stops for approval and its portable file drives agreement formation without PDFs", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-stages-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(path.join(legacy.caseDirectory, "formation-request.json"), "utf8"));
+  const draft = request.inputs.newAgreementEdition;
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({ requestPath, sources: {
+    "document-1": path.join(temporary, "contract.pdf"), "document-2": path.join(temporary, "amendment.pdf"),
+  }, outputRoot: path.join(temporary, "master-cases") });
+  const config = targetConfig(path.join(temporary, "runs"));
+  const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+  assert.equal(result.state.status, "awaiting-master-approval");
+  assert.equal(await exists(path.join(result.runDirectory, "rounds/01/package/word/document.xml")), false);
+  assert.equal(await exists(path.join(result.runDirectory, "rounds/01/change-plan-task.json")), false);
+  const pending = await readRunMaster(result.runDirectory);
+  await assert.rejects(approveMasterRun({ runDirectory: result.runDirectory, approver: "Тест", masterSha256: "0".repeat(64) }), /Хеш/);
+  await assert.rejects(approveMasterRun({ runDirectory: result.runDirectory, approver: " ", masterSha256: pending.sha256 }), /ФИО/);
+  const master = await approveMasterRun({ runDirectory: result.runDirectory, approver: "Тест", masterSha256: pending.sha256 });
+  assert.equal(master.approval.sha256, pending.sha256);
+  const portable = JSON.parse(await readFile(path.join(result.runDirectory, "master-contract.json"), "utf8"));
+  assert.deepEqual(portable, master);
+  request.workflowStage = "agreement";
+  request.inputs = { signedDocuments: [], masterContract: portable, newAgreementEdition: draft };
+  const agreementRequestPath = path.join(temporary, "agreement-request.json");
+  await writeFile(agreementRequestPath, JSON.stringify(request));
+  const agreementCase = await prepareCase({ requestPath: agreementRequestPath, draftPath: path.join(temporary, "draft.docx"), outputRoot: path.join(temporary, "agreement-cases") });
+  const agreement = await createAndRun({ caseDirectory: agreementCase.caseDirectory, config });
+  assert.equal(agreement.state.status, "awaiting-human-approval");
+  assert.equal(agreement.state.masterSha256, master.sha256);
+  assert.deepEqual(await readdir(path.join(agreement.runDirectory, "input/signed")), []);
+  assert.equal(await exists(path.join(agreement.runDirectory, "rounds/01/reconstruction-task.json")), false);
+  assert.equal(await readFile(path.join(agreement.runDirectory, "rounds/01/artifacts/current-contract.md"), "utf8"), master.payload.currentContract);
+  assert.deepEqual(await readRunMaster(agreement.runDirectory), master);
+  await approveRun({ runDirectory: agreement.runDirectory, approver: "Тест", candidateSha256: agreement.state.candidateSha256, findingsSha256: agreement.state.findingsSha256 });
+  await finalizeRun(agreement.runDirectory);
+  await verifyRun(agreement.runDirectory);
+
+  // Any downstream agent changing the approved baseline must fail closed.
+  process.env.FAKE_GIGACODE_MODE = "mutate-master";
+  try {
+    const mutationConfig = targetConfig(path.join(temporary, "mutated-runs"), { passEnvironment: ["FAKE_GIGACODE_MODE"] });
+    await assert.rejects(createAndRun({ caseDirectory: agreementCase.caseDirectory, config: mutationConfig }), /изменил проверенный мастер-договор/);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+
+  // Edited portable content cannot be silently reused with the old approval.
+  request.inputs.masterContract.payload.currentContract += "tampered";
+  await writeFile(agreementRequestPath, JSON.stringify(request));
+  await assert.rejects(prepareCase({ requestPath: agreementRequestPath, draftPath: path.join(temporary, "draft.docx"), outputRoot: path.join(temporary, "tampered-cases") }), /SHA-256/);
 });

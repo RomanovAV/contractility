@@ -56,3 +56,11 @@ An instrument with `decision=unresolved` must not be treated as applied.
 The orchestrator appends the exact JSON output contract to this prompt. Return
 the report only in the final assistant response. Never save it to a file or
 replace it with a prose confirmation that review is complete.
+
+Validated master contract policy:
+When task.policy.currentContractPolicy is `validated-master-read-only`, the supplied
+`artifacts/current-contract.md` and `artifacts/reconstruction-scope.json` are the
+human-validated baseline. Do not reconstruct, reapply historical amendments, or
+modify either file. Use that exact baseline to assess and implement the proposed
+agreement. Report any baseline concern explicitly for a separate human review;
+never silently correct the master during agreement formation.
