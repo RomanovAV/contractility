@@ -175,6 +175,7 @@ function stateLabel(status) {
     created: "Создание запуска",
     "inputs-verified": "Входы проверены",
     "reconstructing-contract": "Реконструкция действующего договора",
+    "reviewing-master": "Проверка мастер-договора по OCR-тексту",
     "awaiting-master-approval": "Мастер-договор ожидает проверки",
     "master-approved": "Мастер-договор подтверждён",
     "planning-changes": "Планирование изменений",

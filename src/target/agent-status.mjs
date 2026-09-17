@@ -3,6 +3,20 @@ import { atomicWriteJson, sha256Text } from "./fs-utils.mjs";
 
 function sessionIdentity(session) {
   const parts = String(session).split(":");
+  if (parts[0] === "master-review" && parts.length >= 3) {
+    return {
+      role: "master-reviewer",
+      round: Number(parts[1]),
+      reviewerId: parts.slice(2).join(":"),
+    };
+  }
+  if (parts[0] === "master-review-format" && parts.length >= 4) {
+    return {
+      role: "master-reviewer-format",
+      round: Number(parts[1]),
+      reviewerId: parts.slice(2, -1).join(":"),
+    };
+  }
   if (parts[0] === "review" && parts.length >= 3) {
     return {
       role: "reviewer",

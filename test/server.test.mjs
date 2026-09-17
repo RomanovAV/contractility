@@ -564,7 +564,7 @@ test("workflow API protects mutations and prepares a verified local case", async
 });
 
 test("workflow API prepares a master without draft and accepts only an approved portable baseline", async (context) => {
-  const { createMasterContract } = await import("../public/master-contract.mjs");
+  const { createMasterContract, masterReviewTargetHash } = await import("../public/master-contract.mjs");
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "contractility-master-api-"));
   context.after(() => rm(dataRoot, { recursive: true, force: true }));
   const targetConfigPath = path.join(dataRoot, "target.json");
@@ -602,12 +602,28 @@ test("workflow API prepares a master without draft and accepts only an approved 
   assert.equal(prepared.status, 201);
   await prepared.arrayBuffer();
 
-  const master = await createMasterContract({
+  const masterPayload = {
     currentContract: "Validated baseline with clause references and source evidence. ".repeat(4),
     signedDocuments: [document],
     reconstructionScope: { schemaVersion: "contractility.reconstruction-scope.v1",
       baseContract: { sourceDocumentId: document.id, number: "1", date: "01.01.2025", page: 1, evidence: document.pages[0].text }, instruments: [] },
-  });
+  };
+  const targetSha256 = await masterReviewTargetHash(masterPayload);
+  const reports = ["review-a", "review-b", "review-c"].map((id) => ({
+    schemaVersion: "contractility.review-report.v1", round: 1,
+    reviewTarget: "master-contract", candidateSha256: targetSha256,
+    reviewer: { id, requestedModel: id, reportedModels: [id], required: true },
+    verdict: "pass", findings: [],
+  }));
+  masterPayload.review = {
+    schemaVersion: "contractility.master-review.v1",
+    reviewedAt: new Date().toISOString(),
+    targetSha256,
+    evidenceManifestSha256: "e".repeat(64),
+    findingsSha256: sha256(""),
+    reports,
+  };
+  const master = await createMasterContract(masterPayload);
   const runId = "run-master-api";
   const runDirectory = path.join(dataRoot, "runs", runId);
   await mkdir(runDirectory, { recursive: true });

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMasterContract, validateMasterContract } from "../public/master-contract.mjs";
+import {
+  createMasterContract,
+  masterFindingsHash,
+  masterReviewTargetHash,
+  validateMasterContract,
+} from "../public/master-contract.mjs";
 import { buildFormationRequest, formationLaunchAvailability } from "../public/workflow-utils.mjs";
 import { validateFormationRequest } from "../src/target/case-store.mjs";
 
@@ -14,8 +19,36 @@ function payload() {
   };
 }
 
+async function reviewedPayload() {
+  const value = payload();
+  const targetSha256 = await masterReviewTargetHash(value);
+  const reports = ["review-a", "review-b", "review-c"].map((id) => ({
+    schemaVersion: "contractility.review-report.v1",
+    round: 1,
+    reviewTarget: "master-contract",
+    candidateSha256: targetSha256,
+    reviewer: {
+      id,
+      requestedModel: id,
+      reportedModels: [id],
+      required: true,
+    },
+    verdict: "pass",
+    findings: [],
+  }));
+  value.review = {
+    schemaVersion: "contractility.master-review.v1",
+    reviewedAt: new Date().toISOString(),
+    targetSha256,
+    evidenceManifestSha256: "e".repeat(64),
+    findingsSha256: await masterFindingsHash(reports),
+    reports,
+  };
+  return value;
+}
+
 async function approvedMaster() {
-  const master = await createMasterContract(payload());
+  const master = await createMasterContract(await reviewedPayload());
   master.approval = { approver: "Проверяющий", approvedAt: new Date().toISOString(), sha256: master.sha256 };
   return master;
 }
@@ -34,9 +67,14 @@ test("portable master binds the complete text, source history and approval", asy
     edit(changed);
     await assert.rejects(validateMasterContract(changed));
   }
-  const pending = await createMasterContract(payload());
+  const pending = await createMasterContract(await reviewedPayload());
   await assert.rejects(validateMasterContract(pending), /подтверждён/);
   await validateMasterContract(pending, { requireApproval: false });
+  const unreviewed = await createMasterContract(payload());
+  await assert.rejects(
+    validateMasterContract(unreviewed, { requireApproval: false }),
+    /межмодельную проверку/,
+  );
 });
 
 test("master and agreement stages have independent requirements", async () => {

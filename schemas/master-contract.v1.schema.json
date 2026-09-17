@@ -9,11 +9,27 @@
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "payload": {
       "type": "object",
-      "required": ["currentContract", "reconstructionScope", "signedDocuments"],
+      "required": ["currentContract", "reconstructionScope", "signedDocuments", "review"],
       "properties": {
         "currentContract": { "type": "string", "minLength": 100 },
         "reconstructionScope": { "$ref": "reconstruction-scope.v1.schema.json" },
-        "signedDocuments": { "type": "array", "minItems": 1 }
+        "signedDocuments": { "type": "array", "minItems": 1 },
+        "review": {
+          "type": "object",
+          "required": ["schemaVersion", "reviewedAt", "targetSha256", "evidenceManifestSha256", "findingsSha256", "reports"],
+          "properties": {
+            "schemaVersion": { "const": "contractility.master-review.v1" },
+            "reviewedAt": { "type": "string", "format": "date-time" },
+            "targetSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "evidenceManifestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "findingsSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "reports": {
+              "type": "array",
+              "minItems": 3,
+              "items": { "$ref": "review-report.v1.schema.json" }
+            }
+          }
+        }
       }
     },
     "approval": {

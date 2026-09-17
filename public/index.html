@@ -154,11 +154,16 @@
           <label for="master-text">Текст мастер-договора для проверки</label>
           <textarea id="master-text" readonly spellcheck="false"></textarea>
           <details><summary>Источники и применённые изменения</summary><pre id="master-scope"></pre></details>
+          <details id="master-review-details">
+            <summary>Межмодельная проверка по OCR-тексту</summary>
+            <p id="master-review-summary" class="master-review-summary"></p>
+            <ul id="master-review-findings" class="finding-list"></ul>
+          </details>
           <div id="master-approval" class="master-actions">
             <label class="approver-field"><span>Мастер-договор проверил(а)</span><input id="master-approver" type="text" autocomplete="name" placeholder="ФИО проверяющего"></label>
             <button id="approve-master" class="primary-button" type="button" disabled>Подтвердить мастер-договор</button>
           </div>
-          <p class="approval-notice">Перед подтверждением проверьте текст, применённые и исключённые соглашения и незаполненные поля. Отметка проверки сохраняется с файлом проекта и не является электронной подписью.</p>
+          <p class="approval-notice">Модели сверяют мастер только с OCR-текстом и не видят изображения страниц. Перед подтверждением проверьте отмеченные страницы по оригиналу, текст, применённые и исключённые соглашения и незаполненные поля. Отметка проверки сохраняется с файлом проекта и не является электронной подписью.</p>
         </div>
       </section>
 

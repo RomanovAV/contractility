@@ -41,7 +41,7 @@ GlobalWorkerOptions.workerSrc = new URL(
 const elements = Object.fromEntries(
   [
     "start-master", "load-master", "master-file-input", "download-master", "download-master-text",
-    "master-status", "master-details", "master-text", "master-scope", "master-approval", "master-approver", "approve-master", "run-title",
+    "master-status", "master-details", "master-text", "master-scope", "master-review-details", "master-review-summary", "master-review-findings", "master-approval", "master-approver", "approve-master", "run-title",
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
     "documents-list", "download-candidate", "download-diagnostics", "download-final", "download-json",
@@ -1393,19 +1393,38 @@ function renderMaster() {
     || !state.masterRunId || !elements["master-approver"].value.trim();
   if (!master) {
     elements["master-text"].value = "";
+    elements["master-review-summary"].textContent = "";
+    elements["master-review-findings"].replaceChildren();
     elements["master-status"].textContent = isOcrComplete()
       ? "Подписанные документы распознаны. Сформируйте мастер-договор — драфт на этом этапе не нужен."
       : "Завершите OCR, чтобы собрать мастер-договор, или загрузите ранее проверенный файл проекта.";
     return;
   }
   const identity = master.payload.reconstructionScope.baseContract;
+  const reviewReports = master.payload.review?.reports ?? [];
+  const reviewFindings = reviewReports.flatMap((report) => report.findings ?? []);
   elements["master-status"].textContent = `Договор № ${identity.number} от ${identity.date}. `
+    + `Межмодельная проверка: ${reviewFindings.length === 0 ? "замечаний нет" : `${reviewFindings.length} замеч.`}. `
     + (master.approval ? `Проверил(а): ${master.approval.approver}. Готов к использованию с драфтом.` : "Редакция собрана. Требуется проверка человеком.");
   if (elements["master-text"].value !== master.payload.currentContract) elements["master-text"].value = master.payload.currentContract;
   elements["master-scope"].textContent = master.payload.signedDocuments.map((document) =>
     `${document.order}. ${document.file.name} (${document.pages.length} стр.)`).join("\n")
     + "\n\n" + master.payload.reconstructionScope.instruments.map((item) =>
       `${item.sourceDocumentId}, стр. ${item.pages.join(", ")}: № ${item.agreementNumber} от ${item.agreementDate} — ${ { included: "применено", excluded: "исключено", unresolved: "требует проверки" }[item.decision] }. ${item.reason}`).join("\n");
+  elements["master-review-summary"].textContent = reviewFindings.length === 0
+    ? `${reviewReports.length} рецензента подтвердили соответствие доступному OCR-тексту. Изображения страниц модели не проверяли.`
+    : `${reviewReports.length} рецензента нашли ${reviewFindings.length} замеч. Проверьте указанные страницы по оригиналу; автоматические исправления не применялись.`;
+  elements["master-review-findings"].replaceChildren();
+  for (const finding of reviewFindings) {
+    const item = globalThis.document.createElement("li");
+    const badge = globalThis.document.createElement("b");
+    badge.textContent = finding.category === "ocr-quality" ? "OCR" : finding.severity;
+    const location = finding.page == null
+      ? finding.sourceDocumentId
+      : `${finding.sourceDocumentId}, стр. ${finding.page}`;
+    item.append(badge, `${location}: ${finding.observed} ${finding.proposedAction}`);
+    elements["master-review-findings"].append(item);
+  }
 }
 
 async function syncRunMaster() {
@@ -1598,6 +1617,13 @@ function gigacodeSessionLabel(session) {
     return "Исправление артефактов DOCX";
   }
   if (session?.startsWith("synthesis:")) return "Арбитр";
+  if (session?.startsWith("master-review-format:")) {
+    return "Исправление формата проверки мастер-договора";
+  }
+  if (session?.startsWith("master-review:")) {
+    const reviewerId = session.split(":").slice(2).join(":");
+    return `Проверка мастера: ${reviewerTitle(reviewerId)}`;
+  }
   if (session?.startsWith("synthesis-artifact:")) {
     return "Исправление артефактов арбитра";
   }
@@ -1763,14 +1789,17 @@ function renderFormationRun(job) {
   const runState = run?.state;
   const status = runState?.status;
   elements["run-id-label"].textContent = state.formationRunId ?? job.jobId ?? "";
-  elements["review-round-label"].textContent = runState?.round
-    ? `Раунд ${runState.round}. Отчёты обновляются после завершения всех рецензентов.`
-    : "Отчёты появятся после формирования кандидата.";
   const masterStage = runState?.workflowStage === "master";
+  elements["review-round-label"].textContent = masterStage
+    ? "Рецензенты сверяют мастер с OCR-текстом. Изображения страниц им недоступны."
+    : runState?.round
+      ? `Раунд ${runState.round}. Отчёты обновляются после завершения всех рецензентов.`
+      : "Отчёты появятся после формирования кандидата.";
   elements["run-title"].textContent = masterStage ? "Подготовка мастер-договора" : "Формирование и межмодельное ревью";
   elements["run-stages"].hidden = masterStage;
   elements["formation-run-card"].querySelector(".approval-notice").hidden = masterStage;
-  elements["reviewers-grid"].closest(".review-section").hidden = masterStage;
+  elements["reviewers-grid"].closest(".review-section").hidden = masterStage
+    && !["reviewing-master", "awaiting-master-approval", "master-approved"].includes(status);
   elements["approve-candidate"].closest(".run-actions").querySelectorAll("button, label").forEach((element) => {
     element.hidden = masterStage && element.id !== "download-diagnostics";
   });
@@ -1811,7 +1840,13 @@ function renderFormationRun(job) {
       "failed",
     );
   } else if (status === "awaiting-master-approval") {
-    setRunStatus("Мастер-договор готов к проверке", "Проверьте текст и историю источников в карточке мастер-договора, затем подтвердите редакцию.");
+    const findingCount = Number(runState.masterReviewFindingCount ?? 0);
+    setRunStatus(
+      "Мастер-договор готов к проверке",
+      findingCount > 0
+        ? `Рецензенты нашли ${findingCount} замеч. Проверьте указанные страницы по оригиналу и исправьте OCR при необходимости, затем пересоберите мастер.`
+        : "Рецензенты не нашли расхождений с OCR-текстом. Проверьте текст и источники по оригиналам, затем подтвердите редакцию.",
+    );
   } else if (status === "master-approved") {
     setRunStatus("Мастер-договор подтверждён", "Сохраните файл проекта или переходите к подготовке рекомендованного допсоглашения.", "good");
   } else if (awaitingApproval) {

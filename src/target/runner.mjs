@@ -57,7 +57,11 @@ import {
   validateReconstructionScope,
 } from "./scope.mjs";
 
-import { createMasterContract, validateMasterContract } from "../../public/master-contract.mjs";
+import {
+  createMasterContract,
+  masterReviewTargetHash,
+  validateMasterContract,
+} from "../../public/master-contract.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -1011,6 +1015,219 @@ async function runReviewer({
   };
 }
 
+function masterReviewerFocus(reviewer) {
+  const id = String(reviewer.id).toLowerCase();
+  if (id.includes("reconstruct")) {
+    return "полнота реконструкции, хронология и точное применение каждого подписанного соглашения";
+  }
+  if (id.includes("evidence") || id.includes("security")) {
+    return "неподтверждённые OCR-источниками утверждения, пропуски доказательств и подозрительные OCR-ошибки";
+  }
+  if (id.includes("cross") || id.includes("reference")) {
+    return "номера пунктов, перекрёстные ссылки, даты, суммы, реквизиты сторон и внутренние противоречия";
+  }
+  if (id.includes("fidelity")) {
+    return "пропуски, повторы и искажения структуры исходного договора в текстовой мастер-редакции";
+  }
+  return `${reviewer.focus}; применительно только к тексту мастер-договора и OCR-источникам`;
+}
+
+async function createMasterReviewSandbox({
+  roundDirectory,
+  taskPath,
+  reviewerId,
+  evidenceManifestSha256,
+  targetSha256,
+  signedDocuments,
+}) {
+  const safeReviewerId = reviewerId.replace(/[^a-zA-Z0-9-]+/g, "-");
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), `contractility-master-review-${safeReviewerId}-`),
+  );
+  await ensurePrivateDirectory(directory);
+  await Promise.all([
+    cp(path.join(roundDirectory, "artifacts"), path.join(directory, "artifacts"), {
+      recursive: true,
+    }),
+    cp(path.join(roundDirectory, "evidence"), path.join(directory, "evidence"), {
+      recursive: true,
+    }),
+    copyFile(taskPath, path.join(directory, path.basename(taskPath))),
+  ]);
+  await verifyEvidenceWorkspace(path.join(directory, "evidence"), evidenceManifestSha256);
+  const copiedTargetSha256 = await masterReviewTargetHash({
+    currentContract: await readFile(path.join(directory, "artifacts/current-contract.md"), "utf8"),
+    reconstructionScope: await readJson(path.join(directory, "artifacts/reconstruction-scope.json")),
+    signedDocuments,
+  });
+  if (copiedTargetSha256 !== targetSha256) {
+    await rm(directory, { recursive: true, force: true });
+    throw new Error(`Не удалось изолировать мастер-договор для reviewer ${reviewerId}.`);
+  }
+  return { directory, targetSha256, evidenceManifestSha256, signedDocuments };
+}
+
+async function masterReviewSandboxWasMutated(sandbox) {
+  try {
+    await verifyEvidenceWorkspace(
+      path.join(sandbox.directory, "evidence"),
+      sandbox.evidenceManifestSha256,
+    );
+    return await masterReviewTargetHash({
+      currentContract: await readFile(
+        path.join(sandbox.directory, "artifacts/current-contract.md"),
+        "utf8",
+      ),
+      reconstructionScope: await readJson(
+        path.join(sandbox.directory, "artifacts/reconstruction-scope.json"),
+      ),
+      signedDocuments: sandbox.signedDocuments,
+    }) !== sandbox.targetSha256;
+  } catch {
+    return true;
+  }
+}
+
+async function runMasterReviewer({
+  reviewer,
+  roundDirectory,
+  targetSha256,
+  config,
+  runDirectory,
+  evidenceManifestSha256,
+  onGigacodeEvent,
+  signedDocuments,
+}) {
+  const task = {
+    schemaVersion: "contractility.master-review-task.v1",
+    round: 1,
+    reviewTarget: "master-contract",
+    targetSha256,
+    evidenceManifestSha256,
+    reviewer: {
+      id: reviewer.id,
+      model: reviewer.model,
+      configuredFocus: reviewer.focus,
+      focus: masterReviewerFocus(reviewer),
+    },
+    policy: {
+      ...formationPolicy(),
+      evidenceBoundary: "ocr-text-only-no-page-images",
+      ocrCorrectionPolicy: "report-suspected-errors-for-human-verification-never-auto-correct",
+      exactValuePolicy: "never-infer-or-normalize-dates-amounts-percentages-identifiers-or-party-details",
+      reviewMode: "read-only",
+    },
+    paths: {
+      evidenceManifest: "evidence/manifest.json",
+      evidenceDocuments: "evidence/documents",
+      currentContract: "artifacts/current-contract.md",
+      reconstructionScope: "artifacts/reconstruction-scope.json",
+    },
+  };
+  const taskPath = path.join(roundDirectory, `master-review-task-${reviewer.id}.json`);
+  await atomicWriteJson(taskPath, task);
+  const runReadOnly = async (options) => {
+    const sandbox = await createMasterReviewSandbox({
+      roundDirectory,
+      taskPath,
+      reviewerId: reviewer.id,
+      evidenceManifestSha256,
+      targetSha256,
+      signedDocuments,
+    });
+    try {
+      return await runGigacode({ ...options, cwd: sandbox.directory });
+    } finally {
+      if (await masterReviewSandboxWasMutated(sandbox)) {
+        await appendEvent(runDirectory, "master-review.sandbox-mutated", {
+          round: 1,
+          reviewerId: reviewer.id,
+          session: options.session,
+          action: "discarded",
+        }).catch(() => {});
+      }
+      await rm(sandbox.directory, { recursive: true, force: true });
+    }
+  };
+  const taskName = path.basename(taskPath);
+  const basePrompt = await loadPrompt("master-reviewer.md");
+  let result = await runReadOnly({
+    config: executorConfig(config),
+    model: reviewer.model,
+    prompt: `${basePrompt.trim()}\n\nMaster review task: ${taskName}\n\n${reviewOutputContract()}`,
+    session: `master-review:1:${reviewer.id}`,
+    onEvent: onGigacodeEvent,
+    transcriptDirectory: transcriptDirectory(config, runDirectory),
+    diagnosticDirectory: diagnosticDirectory(runDirectory),
+  });
+  if (!result.ok) {
+    throw new Error(
+      `Reviewer мастер-договора ${reviewer.id} завершился с ошибкой: ${formatGigacodeFailure(result)}`,
+    );
+  }
+  assertRequestedModel(result, reviewer.model);
+  let report;
+  let lastError;
+  const sourceOutput = result.output;
+  for (let attempt = 0; attempt <= config.review.formatRetries; attempt += 1) {
+    try {
+      report = parseReviewReport(result.output);
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt === config.review.formatRetries) break;
+      const formatDirectory = await mkdtemp(
+        path.join(os.tmpdir(), `contractility-master-review-format-${reviewer.id}-`),
+      );
+      try {
+        result = await runGigacode({
+          config: executorConfig(config),
+          model: config.models.synthesizer,
+          prompt: formatRetryPrompt(sourceOutput, error),
+          cwd: formatDirectory,
+          session: `master-review-format:1:${reviewer.id}:${attempt + 1}`,
+          onEvent: onGigacodeEvent,
+          transcriptDirectory: transcriptDirectory(config, runDirectory),
+          diagnosticDirectory: diagnosticDirectory(runDirectory),
+        });
+      } finally {
+        await rm(formatDirectory, { recursive: true, force: true });
+      }
+      if (!result.ok) break;
+      assertRequestedModel(result, config.models.synthesizer);
+    }
+  }
+  if (lastError || !report) {
+    throw new Error(
+      `Reviewer мастер-договора ${reviewer.id} нарушил формат: ${lastError?.message ?? result.stderr}`,
+    );
+  }
+  await verifyEvidenceWorkspace(
+    path.join(roundDirectory, "evidence"),
+    evidenceManifestSha256,
+  );
+  return {
+    schemaVersion: "contractility.review-report.v1",
+    round: 1,
+    reviewTarget: "master-contract",
+    candidateSha256: targetSha256,
+    reviewer: {
+      id: reviewer.id,
+      requestedModel: reviewer.model,
+      reportedModels: result.reportedModels,
+      required: reviewer.required !== false,
+    },
+    verdict: report.verdict,
+    findings: report.findings,
+    execution: {
+      sessionId: result.sessionId,
+      durationMs: result.durationMs,
+      usage: result.usage,
+    },
+  };
+}
+
 async function runSynthesis({
   round,
   roundDirectory,
@@ -1423,13 +1640,106 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
 
     }
     if (masterOnly) {
-      const master = await createMasterContract({
+      const masterPayload = {
         currentContract: await readFile(path.join(firstRoundDirectory, "artifacts/current-contract.md"), "utf8"),
         reconstructionScope: await readJson(path.join(firstRoundDirectory, "artifacts/reconstruction-scope.json")),
         signedDocuments: formationRequest.inputs.signedDocuments,
+      };
+      const targetSha256 = await masterReviewTargetHash(masterPayload);
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "reviewing-master",
+        round: 1,
+        masterReviewTargetSha256: targetSha256,
       });
+      const reviewDirectory = path.join(firstRoundDirectory, "reviews");
+      await ensurePrivateDirectory(reviewDirectory);
+      const reviewResults = await mapPool(
+        config.models.reviewers,
+        config.review.maxParallel,
+        async (reviewer) => {
+          try {
+            const report = await runMasterReviewer({
+              reviewer,
+              roundDirectory: firstRoundDirectory,
+              targetSha256,
+              config,
+              runDirectory,
+              evidenceManifestSha256,
+              onGigacodeEvent: gigacodeEvents.record,
+              signedDocuments: formationRequest.inputs.signedDocuments,
+            });
+            await atomicWriteJson(
+              path.join(reviewDirectory, `${report.reviewer.id}.json`),
+              report,
+            );
+            return { ok: true, reviewer, report };
+          } catch (error) {
+            return {
+              ok: false,
+              reviewer,
+              error: error.message ?? String(error),
+            };
+          }
+        },
+      );
+      const requiredFailures = reviewResults.filter(
+        (result) => !result.ok && result.reviewer.required !== false,
+      );
+      if (requiredFailures.length > 0) {
+        throw new Error(
+          `Обязательные reviewer мастер-договора завершились с ошибкой:\n${requiredFailures
+            .map((result) => `${result.reviewer.id}: ${result.error}`)
+            .join("\n")}`,
+        );
+      }
+      const reports = reviewResults
+        .filter((result) => result.ok)
+        .map((result) => result.report);
+      if (reports.length < 3) {
+        throw new Error(
+          `Для мастер-договора получено только ${reports.length} успешных отчёта; требуется минимум 3.`,
+        );
+      }
+      await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+      await verifyEvidenceWorkspace(
+        path.join(firstRoundDirectory, "evidence"),
+        evidenceManifestSha256,
+      );
+      if (await masterReviewTargetHash({
+        currentContract: await readFile(
+          path.join(firstRoundDirectory, "artifacts/current-contract.md"),
+          "utf8",
+        ),
+        reconstructionScope: await readJson(
+          path.join(firstRoundDirectory, "artifacts/reconstruction-scope.json"),
+        ),
+        signedDocuments: formationRequest.inputs.signedDocuments,
+      }) !== targetSha256) {
+        throw new Error("Мастер-договор изменён во время межмодельной проверки.");
+      }
+      const findingsSha256 = findingFingerprint(reports);
+      masterPayload.review = {
+        schemaVersion: "contractility.master-review.v1",
+        reviewedAt: new Date().toISOString(),
+        targetSha256,
+        evidenceManifestSha256,
+        findingsSha256,
+        reports,
+      };
+      const master = await createMasterContract(masterPayload);
       await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
-      state = await writeState(runDirectory, { ...state, status: "awaiting-master-approval", masterSha256: master.sha256, masterPath: "master-contract.json" });
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "awaiting-master-approval",
+        masterSha256: master.sha256,
+        masterPath: "master-contract.json",
+        findingsSha256,
+        masterReviewFindingCount: reports.reduce(
+          (total, report) => total + report.findings.length,
+          0,
+        ),
+      });
       return { runId, runDirectory, state };
     }
 

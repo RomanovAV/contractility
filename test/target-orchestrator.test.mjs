@@ -1597,6 +1597,10 @@ test("master stage stops for approval and its portable file drives agreement for
   assert.equal(await exists(path.join(result.runDirectory, "rounds/01/package/word/document.xml")), false);
   assert.equal(await exists(path.join(result.runDirectory, "rounds/01/change-plan-task.json")), false);
   const pending = await readRunMaster(result.runDirectory);
+  assert.equal(pending.payload.review.schemaVersion, "contractility.master-review.v1");
+  assert.equal(pending.payload.review.reports.length, 3);
+  assert.equal(pending.payload.review.reports.every((report) => report.verdict === "pass"), true);
+  assert.equal(pending.payload.review.findingsSha256, result.state.findingsSha256);
   await assert.rejects(approveMasterRun({ runDirectory: result.runDirectory, approver: "Тест", masterSha256: "0".repeat(64) }), /Хеш/);
   await assert.rejects(approveMasterRun({ runDirectory: result.runDirectory, approver: " ", masterSha256: pending.sha256 }), /ФИО/);
   const master = await approveMasterRun({ runDirectory: result.runDirectory, approver: "Тест", masterSha256: pending.sha256 });
@@ -1631,5 +1635,51 @@ test("master stage stops for approval and its portable file drives agreement for
   // Edited portable content cannot be silently reused with the old approval.
   request.inputs.masterContract.payload.currentContract += "tampered";
   await writeFile(agreementRequestPath, JSON.stringify(request));
-  await assert.rejects(prepareCase({ requestPath: agreementRequestPath, draftPath: path.join(temporary, "draft.docx"), outputRoot: path.join(temporary, "tampered-cases") }), /SHA-256/);
+  await assert.rejects(
+    prepareCase({
+      requestPath: agreementRequestPath,
+      draftPath: path.join(temporary, "draft.docx"),
+      outputRoot: path.join(temporary, "tampered-cases"),
+    }),
+    /изменены после межмодельной проверки|SHA-256/,
+  );
+});
+
+test("master review records suspected OCR errors without rewriting the reconstructed text", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-ocr-review-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(
+    path.join(legacy.caseDirectory, "formation-request.json"),
+    "utf8",
+  ));
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({
+    requestPath,
+    sources: {
+      "document-1": path.join(temporary, "contract.pdf"),
+      "document-2": path.join(temporary, "amendment.pdf"),
+    },
+    outputRoot: path.join(temporary, "master-cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "master-review-finding";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(result.state.status, "awaiting-master-approval");
+    assert.equal(result.state.masterReviewFindingCount, 1);
+    const master = await readRunMaster(result.runDirectory);
+    assert.match(master.payload.currentContract, /Проверяемая тестовая редакция договора/);
+    const findings = master.payload.review.reports.flatMap((report) => report.findings);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].category, "ocr-quality");
+    assert.match(findings[0].proposedAction, /вручную исправить OCR-текст/);
+    assert.doesNotMatch(master.payload.currentContract, /ТЕ5Т-1/);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
 });

@@ -6,6 +6,48 @@ export async function masterPayloadHash(payload) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export async function masterReviewTargetHash(payload) {
+  return masterPayloadHash({
+    currentContract: payload.currentContract,
+    reconstructionScope: payload.reconstructionScope,
+    signedDocuments: payload.signedDocuments,
+  });
+}
+
+export async function masterFindingsHash(reports) {
+  const ids = reports
+    .flatMap((report) => report.findings.map((finding) => finding.id))
+    .sort();
+  const bytes = new TextEncoder().encode(ids.join("\n"));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function validateMasterReview(review) {
+  if (review?.schemaVersion !== "contractility.master-review.v1"
+    || !Number.isFinite(Date.parse(review.reviewedAt))
+    || !/^[a-f0-9]{64}$/.test(review.targetSha256 ?? "")
+    || !/^[a-f0-9]{64}$/.test(review.evidenceManifestSha256 ?? "")
+    || !/^[a-f0-9]{64}$/.test(review.findingsSha256 ?? "")
+    || !Array.isArray(review.reports)
+    || review.reports.length < 3) {
+    throw new TypeError("Мастер-договор не прошёл обязательную межмодельную проверку.");
+  }
+  for (const report of review.reports) {
+    if (report?.schemaVersion !== "contractility.review-report.v1"
+      || report.round !== 1
+      || report.reviewTarget !== "master-contract"
+      || report.candidateSha256 !== review.targetSha256
+      || typeof report.reviewer?.id !== "string"
+      || !report.reviewer.id
+      || !["pass", "changes-required"].includes(report.verdict)
+      || !Array.isArray(report.findings)
+      || report.findings.some((finding) => typeof finding?.id !== "string" || !finding.id)) {
+      throw new TypeError("Отчёты проверки мастер-договора повреждены.");
+    }
+  }
+}
+
 export function validateMasterStructure(master, { requireApproval = true } = {}) {
   if (master?.schemaVersion !== MASTER_SCHEMA
     || typeof master.payload?.currentContract !== "string"
@@ -16,6 +58,7 @@ export function validateMasterStructure(master, { requireApproval = true } = {})
     || !/^[a-f0-9]{64}$/.test(master.sha256 ?? "")) {
     throw new TypeError("Некорректный файл мастер-договора.");
   }
+  validateMasterReview(master.payload.review);
   const { signedDocuments, reconstructionScope } = master.payload;
   const ids = new Set();
   for (const [index, document] of signedDocuments.entries()) {
@@ -53,6 +96,13 @@ export function validateMasterStructure(master, { requireApproval = true } = {})
 
 export async function validateMasterContract(master, options) {
   validateMasterStructure(master, options);
+  if (await masterReviewTargetHash(master.payload) !== master.payload.review.targetSha256) {
+    throw new TypeError("Текст или источники мастер-договора изменены после межмодельной проверки.");
+  }
+  if (await masterFindingsHash(master.payload.review.reports)
+    !== master.payload.review.findingsSha256) {
+    throw new TypeError("Реестр замечаний мастер-договора изменён после межмодельной проверки.");
+  }
   if (await masterPayloadHash(master.payload) !== master.sha256) {
     throw new TypeError("Мастер-договор изменён после проверки: SHA-256 не совпадает.");
   }

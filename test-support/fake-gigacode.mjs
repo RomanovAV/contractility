@@ -314,6 +314,32 @@ if (model === "missing-model") {
   }
 } else if (prompt.includes("formatting-only recovery for a review report")) {
   emit({ verdict: "pass", findings: [] });
+} else if (prompt.includes("independent read-only review of the reconstructed master contract")) {
+  const taskName = prompt.match(/Master review task: ([^\s]+)/)?.[1];
+  const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
+  await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
+  await readFile(path.join(process.cwd(), task.paths.currentContract), "utf8");
+  await readFile(path.join(process.cwd(), task.paths.reconstructionScope), "utf8");
+  if (mode.includes("master-review-finding") && model === "review-model-a") {
+    emit({
+      verdict: "changes-required",
+      findings: [{
+        severity: "major",
+        category: "ocr-quality",
+        target: "Номер базового договора в мастер-договоре",
+        sourceDocumentId: "document-1",
+        page: 1,
+        clause: "Реквизиты договора",
+        evidence: "OCR: Договор №ТЕ5Т-1",
+        observed: "OCR-фрагмент допускает смешение кириллицы, латиницы и цифры в номере договора.",
+        impact: "Ошибочный номер договора попадёт в мастер-редакцию и последующее допсоглашение.",
+        proposedAction: "Проверить номер на изображении страницы 1 и вручную исправить OCR-текст перед новой сборкой.",
+        confidence: 0.86,
+      }],
+    });
+  } else {
+    emit({ verdict: "pass", findings: [] });
+  }
 } else if (prompt.includes("independent read-only review")) {
   const taskName = prompt.match(/Review task: ([^\s]+)/)?.[1];
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
