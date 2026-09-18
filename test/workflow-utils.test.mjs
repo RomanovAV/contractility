@@ -11,6 +11,7 @@ import {
   moveHistoricalDocument,
   normalizeDocumentOrder,
   normalizeReviewerReports,
+  removeDocumentAt,
   validateDraftAgreementFile,
 } from "../public/workflow-utils.mjs";
 
@@ -179,6 +180,28 @@ test("moveHistoricalDocument reorders only signed amendments", () => {
   const reordered = moveHistoricalDocument(documents, 2, -1);
   assert.deepEqual(reordered.map((document) => document.id), ["base", "second", "first"]);
   assert.equal(reordered[1].label, "Подписанное доп. соглашение 1");
+});
+
+test("removeDocumentAt removes one document and promotes the next document when needed", () => {
+  const baseResults = [{ text: "base" }];
+  const nextResults = [{ text: "next" }];
+  const documents = normalizeDocumentOrder([
+    { id: "base", results: baseResults },
+    { id: "first", results: nextResults },
+    { id: "second", results: [] },
+  ]);
+
+  const withoutAmendment = removeDocumentAt(documents, 1);
+  assert.deepEqual(withoutAmendment.map((document) => document.id), ["base", "second"]);
+  assert.equal(withoutAmendment[1].label, "Подписанное доп. соглашение 1");
+
+  const withoutBase = removeDocumentAt(documents, 0);
+  assert.deepEqual(withoutBase.map((document) => document.id), ["first", "second"]);
+  assert.equal(withoutBase[0].role, "contract");
+  assert.equal(withoutBase[0].label, "Исходный договор");
+  assert.equal(withoutBase[0].results, nextResults);
+  assert.deepEqual(removeDocumentAt([documents[0]], 0), []);
+  assert.equal(removeDocumentAt(documents, 10), documents);
 });
 
 test("buildFormationRequest records the four-stage legal workflow and DOCX identity", () => {

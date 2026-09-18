@@ -137,6 +137,13 @@ export function mergeDocumentBatch(previousDocuments, pendingDocuments) {
   };
 }
 
+export function removeDocumentAt(documents, index) {
+  if (!Array.isArray(documents) || index < 0 || index >= documents.length) {
+    return documents;
+  }
+  return normalizeDocumentOrder(documents.filter((_, documentIndex) => documentIndex !== index));
+}
+
 export function moveHistoricalDocument(documents, index, direction) {
   if (!Array.isArray(documents) || index <= 0 || index >= documents.length) {
     return documents;

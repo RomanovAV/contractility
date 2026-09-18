@@ -20,6 +20,7 @@ import {
   mergeDocumentBatch,
   moveHistoricalDocument,
   normalizeReviewerReports,
+  removeDocumentAt,
   validateDraftAgreementFile,
 } from "./workflow-utils.mjs";
 import {
@@ -405,8 +406,8 @@ function renderFileSummary() {
     description.append(role, name, meta);
 
     const trailing = globalThis.document.createElement("div");
+    trailing.className = "file-order-actions";
     if (index > 0) {
-      trailing.className = "file-order-actions";
       const up = globalThis.document.createElement("button");
       up.type = "button";
       up.textContent = "↑";
@@ -423,13 +424,87 @@ function renderFileSummary() {
       down.addEventListener("click", () => reorderHistoricalDocument(index, 1));
       trailing.append(up, down);
     } else {
-      trailing.className = document.error ? "ready-mark failed" : "ready-mark";
-      trailing.setAttribute("aria-label", document.pdf ? "Файл готов" : "Файл подготавливается");
-      trailing.textContent = document.error ? "!" : document.pdf ? "✓" : "1";
+      const ready = globalThis.document.createElement("span");
+      ready.className = document.error ? "ready-mark failed" : "ready-mark";
+      ready.setAttribute("aria-label", document.pdf ? "Файл готов" : "Файл подготавливается");
+      ready.textContent = document.error ? "!" : document.pdf ? "✓" : "1";
+      trailing.append(ready);
     }
+    const remove = globalThis.document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-document-button";
+    remove.textContent = "×";
+    remove.title = "Удалить документ";
+    remove.setAttribute("aria-label", `Удалить «${document.file.name}» из комплекта`);
+    remove.disabled = inputsLocked() || state.formationBusy;
+    remove.addEventListener("click", () => {
+      removeDocument(index).catch((error) => {
+        console.error(error);
+        setError(`Не удалось удалить документ: ${error.message ?? error}`);
+      });
+    });
+    trailing.append(remove);
     item.append(icon, description, trailing);
     elements["file-summary"].append(item);
   }
+}
+
+async function removeDocument(index) {
+  if (inputsLocked() || state.formationBusy) return;
+  const removedDocument = state.documents[index];
+  if (!removedDocument) return;
+
+  const selectedDocument = currentDocument();
+  const selectedId = selectedDocument?.id;
+  const selectedPage = state.selectedPage;
+  destroyDocuments([removedDocument]);
+  invalidateMaster();
+  clearTimeout(state.formationPollTimer);
+  state.formationPollTimer = null;
+  setFormationRunId(null);
+  state.formationRun = null;
+  elements["formation-run-card"].hidden = true;
+  state.documents = removeDocumentAt(state.documents, index);
+
+  if (state.documents.length === 0) {
+    state.selectedDocument = 0;
+    state.selectedPage = 1;
+    elements["file-input"].value = "";
+    elements["additional-file-input"].value = "";
+    elements["file-summary"].replaceChildren();
+    elements["file-summary"].hidden = true;
+    elements["drop-zone"].hidden = false;
+    elements["add-files-button"].hidden = true;
+    elements["reset-button"].hidden = true;
+    elements["start-button"].disabled = true;
+    clearResults();
+    renderDraftAgreement();
+    setError("");
+    return;
+  }
+
+  const retainedSelection = state.documents.findIndex((document) => document.id === selectedId);
+  state.selectedDocument = retainedSelection >= 0
+    ? retainedSelection
+    : Math.min(index, state.documents.length - 1);
+  const nextPage = retainedSelection >= 0 ? selectedPage : 1;
+  elements["file-summary"].hidden = false;
+  elements["drop-zone"].hidden = true;
+  elements["add-files-button"].hidden = false;
+  elements["reset-button"].hidden = false;
+  elements["workspace"].hidden = false;
+  renderFileSummary();
+  renderDocumentsList();
+  await selectDocument(state.selectedDocument, nextPage);
+  updateProgress({
+    percent: totalPageCount() > 0 ? (completedPageCount() / totalPageCount()) * 100 : 0,
+    title: "Комплект изменён",
+    detail: `Удалён «${removedDocument.file.name}» · ${state.documents.length} док. в комплекте`,
+  });
+  elements["start-button"].disabled = !hasReadyDocuments();
+  updateStartButtonLabel();
+  renderDraftAgreement();
+  setError("");
 }
 
 function reorderHistoricalDocument(index, direction) {
@@ -579,6 +654,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
     }
 
     state.loading = false;
+    renderFileSummary();
     elements["add-files-button"].disabled = false;
     elements["start-button"].disabled = false;
     elements["workspace"].hidden = false;
@@ -612,6 +688,7 @@ async function loadDocuments(fileList, { append = false } = {}) {
       }
     }
     state.loading = false;
+    renderFileSummary();
     elements["add-files-button"].hidden = !hasReadyDocuments();
     elements["add-files-button"].disabled = false;
     elements["start-button"].disabled = !hasReadyDocuments();

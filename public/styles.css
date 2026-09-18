@@ -79,8 +79,11 @@ h2 { margin-bottom: 0; font-size: 18px; line-height: 1.25; }
 .ready-mark { margin-left: auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
 .ready-mark.failed { background: var(--danger); }
 .file-order-actions { display: flex; flex: 0 0 auto; gap: 5px; margin-left: auto; }
+.file-order-actions .ready-mark { margin-left: 0; }
 .file-order-actions button { width: 30px; height: 30px; border: 1px solid #c7d7d0; border-radius: 8px; background: white; color: var(--accent-dark); cursor: pointer; }
 .file-order-actions button:hover:not(:disabled) { background: var(--accent-soft); }
+.file-order-actions .remove-document-button { border-color: #e5c0c0; color: var(--danger); font-size: 20px; line-height: 1; }
+.file-order-actions .remove-document-button:hover:not(:disabled) { background: #fff0f0; }
 .file-order-actions button:disabled { opacity: 0.3; cursor: not-allowed; }
 
 .draft-section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
