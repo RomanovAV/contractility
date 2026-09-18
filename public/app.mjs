@@ -721,7 +721,10 @@ function renderPageList() {
     title.className = view.tone;
     title.textContent = view.title;
     const detail = globalThis.document.createElement("span");
-    detail.textContent = view.detail;
+    const rotationOverride = document?.pageRotationOverrides[String(pageNumber)];
+    detail.textContent = rotationOverride == null
+      ? view.detail
+      : `${view.detail} · поворот ${rotationLabel(rotationOverride)}`;
     stateElement.replaceChildren(title, detail);
   }
   if (document) {
@@ -823,11 +826,19 @@ function updatePageRotationControls() {
   const override = document?.pageRotationOverrides[String(state.selectedPage)];
   const mode = override ?? elements["rotation-select"].value;
   elements["page-rotation-label"].textContent = override == null
-    ? `По умолчанию: ${rotationLabel(mode)}`
-    : rotationLabel(mode);
+    ? `Эта страница: ${rotationLabel(mode).toLowerCase()}`
+    : `Эта страница: ${rotationLabel(mode)}`;
   elements["rotate-page-left"].disabled = inputsLocked() || !document?.pdf;
   elements["rotate-page-right"].disabled = inputsLocked() || !document?.pdf;
   elements["reset-page-rotation"].disabled = inputsLocked() || !document?.pdf || override == null;
+}
+
+function invalidatePageAfterRotation(document, pageNumber) {
+  if (!document?.results[pageNumber - 1]) return;
+  document.results[pageNumber - 1] = null;
+  invalidateMaster();
+  renderPageList();
+  updateTextPanel();
 }
 
 async function rotateSelectedPage(delta) {
@@ -839,6 +850,7 @@ async function rotateSelectedPage(delta) {
   const currentRotation = resolveAdditionalPageRotation(displayedViewport, currentMode);
   const nextRotation = (currentRotation + delta + 360) % 360;
   document.pageRotationOverrides[String(state.selectedPage)] = String(nextRotation);
+  invalidatePageAfterRotation(document, state.selectedPage);
   updatePageRotationControls();
   await renderPreview(state.selectedPage);
 }
@@ -2268,17 +2280,49 @@ elements["overlay-toggle"].addEventListener("change", () => {
   renderOverlay(currentDocument()?.results[state.selectedPage - 1]?.lines ?? []);
 });
 elements["rotation-select"].addEventListener("change", () => {
+  let invalidated = false;
+  for (const document of state.documents) {
+    for (let index = 0; index < document.results.length; index += 1) {
+      if (
+        document.results[index]
+        && document.pageRotationOverrides[String(index + 1)] == null
+      ) {
+        document.results[index] = null;
+        invalidated = true;
+      }
+    }
+  }
+  if (invalidated) {
+    invalidateMaster();
+    renderPageList();
+    updateTextPanel();
+  }
   updatePageRotationControls();
-  if (currentDocument()?.pdf) renderPreview(state.selectedPage).catch(console.error);
+  if (currentDocument()?.pdf) {
+    renderPreview(state.selectedPage).catch((error) => {
+      console.error(error);
+      setError(`Не удалось применить поворот: ${formatPdfReadError(error)}`);
+    });
+  }
 });
-elements["rotate-page-left"].addEventListener("click", () => rotateSelectedPage(-90).catch(console.error));
-elements["rotate-page-right"].addEventListener("click", () => rotateSelectedPage(90).catch(console.error));
+elements["rotate-page-left"].addEventListener("click", () => rotateSelectedPage(-90).catch((error) => {
+  console.error(error);
+  setError(`Не удалось повернуть страницу: ${formatPdfReadError(error)}`);
+}));
+elements["rotate-page-right"].addEventListener("click", () => rotateSelectedPage(90).catch((error) => {
+  console.error(error);
+  setError(`Не удалось повернуть страницу: ${formatPdfReadError(error)}`);
+}));
 elements["reset-page-rotation"].addEventListener("click", () => {
   const document = currentDocument();
   if (!document) return;
   delete document.pageRotationOverrides[String(state.selectedPage)];
+  invalidatePageAfterRotation(document, state.selectedPage);
   updatePageRotationControls();
-  renderPreview(state.selectedPage).catch(console.error);
+  renderPreview(state.selectedPage).catch((error) => {
+    console.error(error);
+    setError(`Не удалось сбросить поворот: ${formatPdfReadError(error)}`);
+  });
 });
 elements["save-workspace"].addEventListener("click", () => {
   saveWorkspaceSnapshot().catch((error) => {

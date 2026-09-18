@@ -86,6 +86,7 @@ test("workspace snapshot round-trips OCR edits and embedded source files", async
   const restored = parseWorkspaceSnapshot(JSON.parse(JSON.stringify(snapshot)));
   assert.equal(restored.ocrResult.documents[0].pages[0].text, "Исправленный текст договора");
   assert.equal(restored.ocrResult.documents[0].pages[0].manuallyEdited, true);
+  assert.deepEqual(restored.ocrResult.documents[0].pageRotationOverrides, { 1: 90 });
   assert.deepEqual(restored.signedDocuments[0].bytes, new Uint8Array(await pdf.arrayBuffer()));
   assert.deepEqual(restored.draftAgreement.bytes, new Uint8Array(await draft.arrayBuffer()));
   assert.equal(restored.signedDocuments[0].file.sha256, pdfSha256);

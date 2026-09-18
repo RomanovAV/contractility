@@ -73,7 +73,7 @@
             <span><strong>Всегда запускать OCR</strong><small>Игнорировать встроенный текст PDF и распознавать изображение каждой страницы. Медленнее; включайте при ошибочном текстовом слое.</small></span>
           </label>
           <label>
-            <span>Поворот страниц</span>
+            <span>Поворот по умолчанию для всех страниц</span>
             <select id="rotation-select">
               <option value="auto" selected>Авто · книжная ориентация</option>
               <option value="0">Не поворачивать</option>
@@ -87,7 +87,7 @@
         <div class="action-row">
           <button id="start-button" class="primary-button" type="button" disabled>Начать распознавание</button>
           <button id="cancel-button" class="secondary-button" type="button" hidden>Остановить после страницы</button>
-          <span id="preflight-note">Поддерживаются русские и английские фрагменты</span>
+          <span id="preflight-note">До запуска выберите страницу ниже и при необходимости поверните её</span>
         </div>
       </section>
 
@@ -120,8 +120,9 @@
             <span id="viewer-position">1 / 1</span>
             <button id="next-page" type="button" aria-label="Следующая страница">→</button>
             <span class="viewer-navigation-divider" aria-hidden="true"></span>
+            <span class="rotation-caption">Поворот этой страницы до OCR</span>
             <button id="rotate-page-left" type="button" aria-label="Повернуть выбранную страницу влево">↶</button>
-            <span id="page-rotation-label">Авто</span>
+            <span id="page-rotation-label">Эта страница: авто</span>
             <button id="rotate-page-right" type="button" aria-label="Повернуть выбранную страницу вправо">↷</button>
             <button id="reset-page-rotation" class="rotation-reset-button" type="button" disabled>Сбросить поворот</button>
           </div>
