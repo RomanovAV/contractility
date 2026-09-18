@@ -7,6 +7,15 @@ export function normalizeWhitespace(value) {
     .trim();
 }
 
+export function formatPdfReadError(error) {
+  const message = error?.message ?? String(error);
+  if (/xref|cross-reference|invalid pdf|formaterror/iu.test(message)) {
+    return "PDF имеет повреждённую или нестандартную внутреннюю структуру. "
+      + "Пересохраните его через «Печать → Сохранить как PDF» и загрузите полученный файл заново.";
+  }
+  return message;
+}
+
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }

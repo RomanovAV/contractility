@@ -5,11 +5,20 @@ import {
   createTextExport,
   createOcrRenderPlan,
   flattenOcrLines,
+  formatPdfReadError,
   isUsefulPdfText,
   normalizeWhitespace,
   readPdfTextLayer,
   resolveAdditionalPageRotation,
 } from "../public/ocr-utils.mjs";
+
+test("formatPdfReadError explains malformed XRef recovery without exposing parser jargon", () => {
+  const message = formatPdfReadError(new Error("Bad (uncompressed) XRef entry: 1R"));
+  assert.match(message, /повреждённую или нестандартную внутреннюю структуру/);
+  assert.match(message, /Печать → Сохранить как PDF/);
+  assert.doesNotMatch(message, /1R/);
+  assert.equal(formatPdfReadError(new Error("обычная ошибка")), "обычная ошибка");
+});
 
 test("createDocumentLabel assigns the first PDF to the contract", () => {
   assert.equal(createDocumentLabel(0), "Договор");

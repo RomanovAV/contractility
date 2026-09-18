@@ -4,6 +4,7 @@ import {
   createDocumentLabel,
   createOcrRenderPlan,
   flattenOcrLines,
+  formatPdfReadError,
   humanFileSize,
   isUsefulPdfText,
   normalizeWhitespace,
@@ -615,7 +616,10 @@ async function loadDocuments(fileList, { append = false } = {}) {
     elements["add-files-button"].disabled = false;
     elements["start-button"].disabled = !hasReadyDocuments();
     updateStartButtonLabel();
-    setError(`Не удалось открыть «${failedDocument?.file.name ?? "PDF"}»: ${error.message ?? error}`);
+    setError(
+      `Не удалось открыть «${failedDocument?.file.name ?? currentDocument()?.file.name ?? "PDF"}»: `
+      + formatPdfReadError(error),
+    );
   }
 }
 
@@ -861,7 +865,17 @@ async function selectPage(pageNumber) {
   renderPageList();
   updateTextPanel();
   updatePageRotationControls();
-  await renderPreview(pageNumber);
+  try {
+    await renderPreview(pageNumber);
+  } catch (error) {
+    console.error(error);
+    document.previewError = serializeError(error);
+    elements["viewer-canvas"].style.visibility = "hidden";
+    renderOverlay([]);
+    if (!state.running) {
+      setError(`Не удалось показать страницу ${pageNumber}: ${formatPdfReadError(error)}`);
+    }
+  }
 }
 
 async function renderOcrCanvas(page, dpi, rotationMode) {
@@ -1049,12 +1063,12 @@ async function runOcr() {
   state.cancelRequested = false;
   setRunning(true);
   state.processingDetail = "Подготовка OCR";
-  await selectDocument(0, 1);
 
   const settings = readSettings();
   const totalPages = totalPageCount();
 
   try {
+    await selectDocument(0, 1);
     updateProgress({
       percent: (completedPageCount() / totalPages) * 100,
       title: "Подготовка документов",
@@ -1109,15 +1123,31 @@ async function runOcr() {
     }
 
     const processed = completedPageCount();
+    const failedPages = state.documents.reduce(
+      (total, document) => total + document.results.filter((result) => result?.error).length,
+      0,
+    );
     updateProgress({
       percent: (processed / totalPages) * 100,
       title: state.cancelRequested ? "Распознавание остановлено" : "Распознавание завершено",
       detail: `Обработано ${processed} из ${totalPages} страниц в ${state.documents.length} док.`,
     });
+    if (failedPages > 0) {
+      const firstFailure = state.documents
+        .flatMap((document) => document.results)
+        .find((result) => result?.error);
+      setError(
+        `Не удалось обработать ${failedPages} стр.: ${formatPdfReadError(firstFailure?.error)} `
+        + "Интерфейс разблокирован — можно сбросить комплект или загрузить пересохранённый PDF.",
+      );
+    }
     updateFormationState();
   } catch (error) {
     console.error(error);
-    setError(`OCR не запустился: ${error.message ?? error}`);
+    setError(
+      `OCR не запустился: ${formatPdfReadError(error)} `
+      + "Интерфейс разблокирован — можно сбросить комплект или выбрать другой файл.",
+    );
   } finally {
     await state.worker?.terminate().catch(console.error);
     state.worker = null;
