@@ -1,4 +1,5 @@
 import { sha256Text } from "./fs-utils.mjs";
+import { HUMAN_REQUIRED_MARKER } from "./scope.mjs";
 
 const SEVERITIES = new Set(["blocker", "major", "minor"]);
 const CATEGORIES = new Set([
@@ -402,7 +403,7 @@ to satisfy the validator. Keep changes limited to confirmed findings and require
 repairs. If protected package content was damaged, use candidate.docx as the pre-synthesis
 baseline and reapply only confirmed editable-part corrections. Never alter evidence or run inputs.
 For every unresolved field, keep its value empty, record it in change-register.json, and place the
-exact visible marker [ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ] at the target. Do not write consensus.json,
+exact visible placeholder ${HUMAN_REQUIRED_MARKER} at the target. Do not write consensus.json,
 and do not create a DOCX or ZIP.
 
 Classify every id in this complete trusted list exactly once:

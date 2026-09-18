@@ -35,7 +35,8 @@ function validateMasterReview(review) {
   }
   for (const report of review.reports) {
     if (report?.schemaVersion !== "contractility.review-report.v1"
-      || report.round !== 1
+      || !Number.isInteger(report.round)
+      || report.round < 1
       || report.reviewTarget !== "master-contract"
       || report.candidateSha256 !== review.targetSha256
       || typeof report.reviewer?.id !== "string"
@@ -45,6 +46,28 @@ function validateMasterReview(review) {
       || report.findings.some((finding) => typeof finding?.id !== "string" || !finding.id)) {
       throw new TypeError("Отчёты проверки мастер-договора повреждены.");
     }
+  }
+  const consolidatedFields = [
+    review.round,
+    review.consensus,
+    review.actionItems,
+    review.actionItemCount,
+    review.omittedActionItemCount,
+    review.history,
+  ];
+  if (consolidatedFields.every((value) => value == null)) return;
+  if (!Number.isInteger(review.round) || review.round < 1
+    || review.consensus?.schemaVersion !== "contractility.master-consensus.v1"
+    || review.consensus.round !== review.round
+    || review.consensus.targetSha256 !== review.targetSha256
+    || !Array.isArray(review.actionItems)
+    || !Number.isInteger(review.actionItemCount)
+    || review.actionItemCount < review.actionItems.length
+    || !Number.isInteger(review.omittedActionItemCount)
+    || review.omittedActionItemCount !== review.actionItemCount - review.actionItems.length
+    || !Array.isArray(review.history)
+    || review.history.length !== review.round) {
+    throw new TypeError("Итог межмодельной проверки мастер-договора повреждён.");
   }
 }
 

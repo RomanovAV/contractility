@@ -255,7 +255,7 @@ export function buildFormationRequest({
       allowSemanticEditsInEditableOoxmlParts: true,
       requiredCoverage: "all-changes-declared-by-proposed-agreement",
       placeholderPolicy: "resolve-or-preserve-empty-and-mark-human-required",
-      unresolvedFieldMarker: "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+      unresolvedFieldMarker: "________________________",
       allowUnresolvedFields: true,
       allowUnresolvedTemplateFields: true,
       preserveDocxFeatures: [

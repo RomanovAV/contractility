@@ -39,11 +39,33 @@ async function reviewedPayload() {
   value.review = {
     schemaVersion: "contractility.master-review.v1",
     reviewedAt: new Date().toISOString(),
+    round: 1,
     targetSha256,
     evidenceManifestSha256: "e".repeat(64),
     findingsSha256: await masterFindingsHash(reports),
     reports,
+    consensus: {
+      schemaVersion: "contractility.master-consensus.v1",
+      round: 1,
+      targetSha256,
+      status: "done",
+      acceptedFindingIds: [],
+      rejectedFindingIds: [],
+      unresolvedFindingIds: [],
+      summary: "Замечаний нет.",
+      execution: null,
+    },
+    actionItems: [],
+    actionItemCount: 0,
+    omittedActionItemCount: 0,
+    history: [],
   };
+  value.review.history.push({
+    round: 1,
+    targetSha256,
+    reports,
+    consensus: value.review.consensus,
+  });
   return value;
 }
 
@@ -75,6 +97,22 @@ test("portable master binds the complete text, source history and approval", asy
     validateMasterContract(unreviewed, { requireApproval: false }),
     /межмодельную проверку/,
   );
+  const legacyPayload = await reviewedPayload();
+  for (const field of [
+    "round",
+    "consensus",
+    "actionItems",
+    "actionItemCount",
+    "omittedActionItemCount",
+    "history",
+  ]) delete legacyPayload.review[field];
+  const legacy = await createMasterContract(legacyPayload);
+  legacy.approval = {
+    approver: "Проверяющий",
+    approvedAt: new Date().toISOString(),
+    sha256: legacy.sha256,
+  };
+  await validateMasterContract(legacy);
 });
 
 test("master and agreement stages have independent requirements", async () => {

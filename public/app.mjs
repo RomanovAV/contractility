@@ -1402,18 +1402,23 @@ function renderMaster() {
   }
   const identity = master.payload.reconstructionScope.baseContract;
   const reviewReports = master.payload.review?.reports ?? [];
-  const reviewFindings = reviewReports.flatMap((report) => report.findings ?? []);
+  const legacyReviewFindings = reviewReports.flatMap((report) => report.findings ?? []);
+  const reviewFindings = Array.isArray(master.payload.review?.actionItems)
+    ? master.payload.review.actionItems
+    : legacyReviewFindings;
+  const reviewFindingCount = master.payload.review?.actionItemCount ?? reviewFindings.length;
+  const omittedFindingCount = master.payload.review?.omittedActionItemCount ?? 0;
   elements["master-status"].textContent = `Договор № ${identity.number} от ${identity.date}. `
-    + `Межмодельная проверка: ${reviewFindings.length === 0 ? "замечаний нет" : `${reviewFindings.length} замеч.`}. `
+    + `Межмодельная проверка: ${reviewFindingCount === 0 ? "замечаний нет" : `${reviewFindingCount} замеч.`}. `
     + (master.approval ? `Проверил(а): ${master.approval.approver}. Готов к использованию с драфтом.` : "Редакция собрана. Требуется проверка человеком.");
   if (elements["master-text"].value !== master.payload.currentContract) elements["master-text"].value = master.payload.currentContract;
   elements["master-scope"].textContent = master.payload.signedDocuments.map((document) =>
     `${document.order}. ${document.file.name} (${document.pages.length} стр.)`).join("\n")
     + "\n\n" + master.payload.reconstructionScope.instruments.map((item) =>
       `${item.sourceDocumentId}, стр. ${item.pages.join(", ")}: № ${item.agreementNumber} от ${item.agreementDate} — ${ { included: "применено", excluded: "исключено", unresolved: "требует проверки" }[item.decision] }. ${item.reason}`).join("\n");
-  elements["master-review-summary"].textContent = reviewFindings.length === 0
-    ? `${reviewReports.length} рецензента подтвердили соответствие доступному OCR-тексту. Изображения страниц модели не проверяли.`
-    : `${reviewReports.length} рецензента нашли ${reviewFindings.length} замеч. Проверьте указанные страницы по оригиналу; автоматические исправления не применялись.`;
+  elements["master-review-summary"].textContent = reviewFindingCount === 0
+    ? `${reviewReports.length} рецензента и арбитр подтвердили соответствие доступному OCR-тексту. Изображения страниц модели не проверяли.`
+    : `После арбитража осталось ${reviewFindingCount} вопрос. для проверки по оригиналу. Автоматически исправлялись только подтверждённые расхождения с OCR-текстом.${omittedFindingCount ? ` Ещё ${omittedFindingCount} сгруппировано в диагностике.` : ""}`;
   elements["master-review-findings"].replaceChildren();
   for (const finding of reviewFindings) {
     const item = globalThis.document.createElement("li");
@@ -1624,6 +1629,11 @@ function gigacodeSessionLabel(session) {
     const reviewerId = session.split(":").slice(2).join(":");
     return `Проверка мастера: ${reviewerTitle(reviewerId)}`;
   }
+  if (session?.startsWith("master-synthesis-format:")) {
+    return "Исправление формата арбитра мастер-договора";
+  }
+  if (session?.startsWith("master-synthesis:")) return "Арбитр мастер-договора";
+  if (session?.startsWith("master-fix:")) return "Исправление мастер-договора";
   if (session?.startsWith("synthesis-artifact:")) {
     return "Исправление артефактов арбитра";
   }
@@ -1799,7 +1809,7 @@ function renderFormationRun(job) {
   elements["run-stages"].hidden = masterStage;
   elements["formation-run-card"].querySelector(".approval-notice").hidden = masterStage;
   elements["reviewers-grid"].closest(".review-section").hidden = masterStage
-    && !["reviewing-master", "awaiting-master-approval", "master-approved"].includes(status);
+    && !["reviewing-master", "fixing-master"].includes(status);
   elements["approve-candidate"].closest(".run-actions").querySelectorAll("button, label").forEach((element) => {
     element.hidden = masterStage && element.id !== "download-diagnostics";
   });
@@ -1852,7 +1862,7 @@ function renderFormationRun(job) {
   } else if (awaitingApproval) {
     setRunStatus(
       "Нужна проверка",
-      "Автоматическое ревью завершено. Проверьте все пометки «ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ» в кандидат DOCX, затем подтвердите точные хеши.",
+      "Автоматическое ревью завершено. Заполните все поля, отмеченные нижними подчёркиваниями «________________________», в кандидат DOCX, затем подтвердите точные хеши.",
     );
   } else if (approved) {
     setRunStatus("Подтверждено", "Хеши зафиксированы. Можно выпустить финальный DOCX.", "good");

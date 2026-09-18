@@ -4,7 +4,7 @@ function requireNonEmptyString(value, label) {
   }
 }
 
-export const HUMAN_REQUIRED_MARKER = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
+export const HUMAN_REQUIRED_MARKER = "________________________";
 
 function requiresHuman(value) {
   return String(value ?? "").trim() === HUMAN_REQUIRED_MARKER;

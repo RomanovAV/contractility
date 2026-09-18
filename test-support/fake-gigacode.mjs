@@ -11,7 +11,7 @@ const valueAfter = (name) => {
 const model = valueAfter("--model") || "fake-default-model";
 const prompt = valueAfter("-p");
 const mode = process.env.FAKE_GIGACODE_MODE ?? "pass";
-const humanRequiredMarker = "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]";
+const humanRequiredMarker = "________________________";
 
 function emit(result) {
   process.stdout.write(`${JSON.stringify({
@@ -318,7 +318,10 @@ if (model === "missing-model") {
   const taskName = prompt.match(/Master review task: ([^\s]+)/)?.[1];
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
   await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
-  await readFile(path.join(process.cwd(), task.paths.currentContract), "utf8");
+  const currentContract = await readFile(
+    path.join(process.cwd(), task.paths.currentContract),
+    "utf8",
+  );
   await readFile(path.join(process.cwd(), task.paths.reconstructionScope), "utf8");
   if (mode.includes("master-review-finding") && model === "review-model-a") {
     emit({
@@ -337,9 +340,62 @@ if (model === "missing-model") {
         confidence: 0.86,
       }],
     });
+  } else if (
+    mode.includes("master-review-fix-once")
+    && model === "review-model-a"
+    && !currentContract.includes("Исправлено по подтверждённому замечанию")
+  ) {
+    emit({
+      verdict: "changes-required",
+      findings: [{
+        severity: "major",
+        category: "contract-reconstruction",
+        target: "Пункт 1 мастер-договора",
+        sourceDocumentId: "document-2",
+        page: 1,
+        clause: "1",
+        evidence: "Изменение",
+        observed: "Подтверждённое изменение отсутствует в мастер-договоре.",
+        impact: "Действующая редакция неполна.",
+        proposedAction: "Добавить подтверждённое OCR-текстом изменение.",
+        confidence: 0.99,
+      }],
+    });
   } else {
     emit({ verdict: "pass", findings: [] });
   }
+} else if (prompt.includes("read-only arbitration of master-contract review findings")) {
+  const taskName = prompt.match(/Master synthesis task: ([^\s]+)/)?.[1];
+  const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
+  const findings = JSON.parse(await readFile(
+    path.join(process.cwd(), task.paths.untrustedFindings),
+    "utf8",
+  ));
+  const all = findings.reports.flatMap((report) => report.findings);
+  const unresolvedFindingIds = all
+    .filter((finding) => finding.category === "ocr-quality")
+    .map((finding) => finding.id);
+  const acceptedFindingIds = all
+    .filter((finding) => finding.category !== "ocr-quality")
+    .map((finding) => finding.id);
+  emit({
+    status: unresolvedFindingIds.length > 0
+      ? "blocked"
+      : acceptedFindingIds.length > 0 ? "fixed" : "done",
+    acceptedFindingIds,
+    rejectedFindingIds: [],
+    unresolvedFindingIds,
+    summary: unresolvedFindingIds.length > 0
+      ? "Подозрение на OCR требует проверки страницы человеком."
+      : "Расхождение подтверждено OCR-текстом и может быть исправлено.",
+  });
+} else if (prompt.includes("apply accepted evidence-backed corrections to the reconstructed master contract")) {
+  const taskName = prompt.match(/Master fix task: ([^\s]+)/)?.[1];
+  const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
+  const currentPath = path.join(process.cwd(), task.paths.currentContract);
+  const current = await readFile(currentPath, "utf8");
+  await writeFile(currentPath, `${current.trim()}\n\nИсправлено по подтверждённому замечанию.\n`);
+  emit({ status: "master-corrected" });
 } else if (prompt.includes("independent read-only review")) {
   const taskName = prompt.match(/Review task: ([^\s]+)/)?.[1];
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));

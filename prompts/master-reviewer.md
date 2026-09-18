@@ -22,5 +22,9 @@ Check the reconstructed master contract against every OCR source and reconstruct
 - do not treat a difference as an error when the reconstruction scope explicitly and correctly
   records an excluded or unresolved instrument.
 
+Report at most five material findings. Combine repeated manifestations of the same underlying
+problem. Do not create a finding that merely asks a human to review the whole contract or a page
+without identifying a concrete conflicting or unsupported fragment.
+
 Apply the reviewer focus from the task without relaxing these rules. A pass means the master is
 fully supported by the available OCR text. It does not mean the scans themselves were verified.

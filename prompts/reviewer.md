@@ -48,7 +48,7 @@ intent that is declared only by the proposed agreement.
 When the task policy has `allowUnresolvedFields=true`, do not report a finding
 merely because any template, legal, commercial, identity, or clause value could
 not be established from the supplied inputs. Confirm that the value remains
-empty, the exact `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]` marker is visible at or next
+empty, the exact `________________________` placeholder is visible at or next
 to its target, it is listed in the change register's `unresolvedFields`, and no
 value was invented. Do report a finding if any of those safeguards is missing.
 An instrument with `decision=unresolved` must not be treated as applied.

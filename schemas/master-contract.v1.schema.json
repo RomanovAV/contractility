@@ -20,6 +20,7 @@
           "properties": {
             "schemaVersion": { "const": "contractility.master-review.v1" },
             "reviewedAt": { "type": "string", "format": "date-time" },
+            "round": { "type": "integer", "minimum": 1 },
             "targetSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
             "evidenceManifestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
             "findingsSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
@@ -27,7 +28,12 @@
               "type": "array",
               "minItems": 3,
               "items": { "$ref": "review-report.v1.schema.json" }
-            }
+            },
+            "consensus": { "type": "object" },
+            "actionItems": { "type": "array", "maxItems": 10 },
+            "actionItemCount": { "type": "integer", "minimum": 0 },
+            "omittedActionItemCount": { "type": "integer", "minimum": 0 },
+            "history": { "type": "array", "minItems": 1 }
           }
         }
       }

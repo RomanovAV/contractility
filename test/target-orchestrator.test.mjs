@@ -862,7 +862,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
     );
     assert.equal(
       producerTask.policy.unresolvedFieldMarker,
-      "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+      "________________________",
     );
     assert.equal(producerTask.policy.allowUnresolvedFields, true);
     assert.equal(producerTask.policy.allowUnresolvedTemplateFields, true);
@@ -901,7 +901,7 @@ test("full run recovers a complete producer candidate after known GigaCode CLI c
         path.join(run.runDirectory, "rounds/01/package/word/document.xml"),
         "utf8",
       ),
-      /ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ/,
+      /________________________/,
     );
     const events = await readFile(path.join(run.runDirectory, "events.ndjson"), "utf8");
     assert.match(events, /"event":"gigacode\.recovered"/);
@@ -1143,7 +1143,7 @@ test("producer repairs missing visible markers before candidate review", async (
       "utf8",
     );
     assert.match(finalXml, /<ns0:document/);
-    assert.equal(finalXml.match(/ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ/g)?.length, 2);
+    assert.equal(finalXml.match(/________________________/g)?.length, 2);
     const agentStatuses = await Promise.all(
       (await readdir(path.join(run.runDirectory, "agent-status")))
         .filter((name) => name.endsWith(".json"))
@@ -1679,6 +1679,57 @@ test("master review records suspected OCR errors without rewriting the reconstru
     assert.equal(findings[0].category, "ocr-quality");
     assert.match(findings[0].proposedAction, /вручную исправить OCR-текст/);
     assert.doesNotMatch(master.payload.currentContract, /ТЕ5Т-1/);
+    assert.deepEqual(
+      master.payload.review.consensus.unresolvedFindingIds,
+      [findings[0].id],
+    );
+    assert.deepEqual(master.payload.review.consensus.acceptedFindingIds, []);
+    assert.equal(master.payload.review.actionItems.length, 1);
+    assert.equal(master.payload.review.history.length, 1);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("master review fixes a confirmed OCR-supported defect and reruns every reviewer", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-fix-review-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(
+    path.join(legacy.caseDirectory, "formation-request.json"),
+    "utf8",
+  ));
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({
+    requestPath,
+    sources: {
+      "document-1": path.join(temporary, "contract.pdf"),
+      "document-2": path.join(temporary, "amendment.pdf"),
+    },
+    outputRoot: path.join(temporary, "master-cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "master-review-fix-once";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(result.state.status, "awaiting-master-approval");
+    assert.equal(result.state.round, 2);
+    assert.equal(result.state.masterReviewFindingCount, 0);
+    const master = await readRunMaster(result.runDirectory);
+    assert.match(master.payload.currentContract, /Исправлено по подтверждённому замечанию/);
+    assert.equal(master.payload.review.round, 2);
+    assert.equal(master.payload.review.history.length, 2);
+    assert.equal(master.payload.review.history[0].consensus.acceptedFindingIds.length, 1);
+    assert.equal(master.payload.review.reports.every((report) => report.verdict === "pass"), true);
+    assert.deepEqual(master.payload.review.actionItems, []);
+    assert.equal(
+      await exists(path.join(result.runDirectory, "rounds/02/artifacts/current-contract.md")),
+      true,
+    );
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

@@ -14,7 +14,7 @@ Security boundary:
 Required work:
 1. Read `reconstruction-task.json`; resolve every path relative to the current working directory.
    The policy's exact unresolved-field marker is
-   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]`. Never invent a value merely to avoid
+   `________________________`. Never invent a value merely to avoid
    this marker.
 2. Establish the base-contract identity only from the evidence document whose
    role is `contract`. Search every page of that document and use both its
@@ -65,14 +65,14 @@ Required work:
    id, page, clause, and short evidence. Include a short scope summary that
    points to `artifacts/reconstruction-scope.json`. Preserve every readable
    fragment. Wherever an exact value or clause fragment cannot be established,
-   leave it unresolved and insert the exact human-required marker instead of
+   leave it unresolved and insert the exact underscore placeholder instead of
    inventing content or stopping.
 10. Parse `artifacts/reconstruction-scope.json` with a JSON parser and verify its
    required objects and arrays before returning the final status.
 11. Do not inspect or modify the candidate OOXML package during this phase.
 12. Missing, unreadable, or conflicting source values must not produce
    `artifacts/blocker.json` or a `blocked` status. Record them with the exact
-   human-required marker and continue. Reserve `blocked` only for a technical
+   underscore placeholder and continue. Reserve `blocked` only for a technical
    inability to read the supplied workspace or create the required artifacts.
 
 When reconstruction is ready, output exactly:

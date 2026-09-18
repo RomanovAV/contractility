@@ -17,6 +17,19 @@ function sessionIdentity(session) {
       reviewerId: parts.slice(2, -1).join(":"),
     };
   }
+  if (parts[0] === "master-synthesis") {
+    return { role: "master-synthesizer", round: Number(parts[1]), reviewerId: null };
+  }
+  if (parts[0] === "master-synthesis-format") {
+    return {
+      role: "master-synthesizer-format",
+      round: Number(parts[1]),
+      reviewerId: null,
+    };
+  }
+  if (parts[0] === "master-fix") {
+    return { role: "master-fixer", round: Number(parts[1]), reviewerId: null };
+  }
   if (parts[0] === "review" && parts.length >= 3) {
     return {
       role: "reviewer",

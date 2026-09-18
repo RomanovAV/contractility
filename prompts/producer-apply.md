@@ -16,7 +16,7 @@ Security boundary:
 Required work:
 1. Read `application-task.json`; resolve every path relative to the current working directory.
    The exact unresolved-field marker is
-   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]`.
+   `________________________`.
 2. Read `artifacts/reconstruction-scope.json` for audit context, but do not
    reinterpret its included/excluded decisions.
 3. Apply only operations listed in `artifacts/change-plan.json`.
@@ -26,7 +26,7 @@ Required work:
 7. Do not reinterpret signed evidence or invent additional changes during this phase.
 8. Do not create a DOCX or ZIP; the deterministic orchestrator packages and validates the directory.
 9. For every entry in `change-register.json.unresolvedFields`, preserve the
-   value itself as empty and place the exact visible human-required marker at
+   value itself as empty and place the exact visible underscore placeholder at
    the applicable field or immediately adjacent to it. This rule applies to
    template, legal, commercial, identity, and clause values. Never replace an
    unresolved value with invented data.

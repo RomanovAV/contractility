@@ -618,11 +618,23 @@ test("workflow API prepares a master without draft and accepts only an approved 
   masterPayload.review = {
     schemaVersion: "contractility.master-review.v1",
     reviewedAt: new Date().toISOString(),
+    round: 1,
     targetSha256,
     evidenceManifestSha256: "e".repeat(64),
     findingsSha256: sha256(""),
     reports,
+    consensus: {
+      schemaVersion: "contractility.master-consensus.v1", round: 1,
+      targetSha256, status: "done", acceptedFindingIds: [],
+      rejectedFindingIds: [], unresolvedFindingIds: [], summary: "No findings.",
+      execution: null,
+    },
+    actionItems: [], actionItemCount: 0, omittedActionItemCount: 0,
+    history: [],
   };
+  masterPayload.review.history.push({
+    round: 1, targetSha256, reports, consensus: masterPayload.review.consensus,
+  });
   const master = await createMasterContract(masterPayload);
   const runId = "run-master-api";
   const runDirectory = path.join(dataRoot, "runs", runId);

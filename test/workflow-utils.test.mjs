@@ -210,7 +210,7 @@ test("buildFormationRequest records the four-stage legal workflow and DOCX ident
   );
   assert.equal(
     request.rules.unresolvedFieldMarker,
-    "[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]",
+    "________________________",
   );
   assert.equal(request.rules.allowUnresolvedFields, true);
   assert.equal(request.rules.allowUnresolvedTemplateFields, true);

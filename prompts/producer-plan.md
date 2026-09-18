@@ -17,7 +17,7 @@ Security boundary:
 Required work:
 1. Read `change-plan-task.json`; resolve every path relative to the current working directory.
    The exact marker for any value the model cannot establish is
-   `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]`.
+   `________________________`.
 2. Read `artifacts/reconstruction-scope.json`. Treat its included/excluded
    decisions as the authoritative evidence boundary for this phase. Never use an
    excluded instrument to establish the current contract or create a change,
@@ -37,7 +37,7 @@ Required work:
 11. First search the entire proposed agreement and supplied evidence for every
    required value. If any template, legal, commercial, identity, or clause value
    cannot be established exactly, do not invent it and do not stop. Preserve
-   the target field empty, plan an adjacent visible human-required marker, and
+   the target field empty, plan the exact adjacent visible underscore placeholder, and
    record an object for it under `unresolvedFields` in
    `artifacts/change-register.json`, including its target, reason, available
    source locator, and marker.

@@ -32,10 +32,10 @@ Security boundary:
   template or a usability/security defect;
 - when `allowUnresolvedFields=true`, reject findings based only on any value
   remaining empty because no supplied input establishes it, provided the exact
-  `[ТРЕБУЕТСЯ ЗАПОЛНЕНИЕ ЧЕЛОВЕКОМ]` marker is visible at its target, it is
+  `________________________` placeholder is visible at its target, it is
   recorded in `unresolvedFields`, and no value was invented;
 - if a confirmed finding cannot be corrected with evidence-backed content,
-  accept it, leave the value empty, add the exact human-required marker, record
+  accept it, leave the value empty, add the exact underscore placeholder, record
   it in `unresolvedFields`, and treat that correction as fixed rather than
   unresolved; never guess a value;
 - work only inside the current round directory;
