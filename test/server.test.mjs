@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { startServer } from "../src/server.mjs";
+import { requireTargetCommand } from "../src/target/config.mjs";
+import {
+  formatTargetRuntimeError,
+  resolveTargetConfigPath,
+} from "../src/ui-workflow-api.mjs";
 import { verifyVendorIntegrity } from "../src/vendor-integrity.mjs";
 
 async function stopServer(server) {
@@ -18,6 +23,39 @@ async function stopServer(server) {
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
+
+test("target config falls back to the bundled default and keeps explicit overrides", () => {
+  assert.match(
+    resolveTargetConfigPath({ environmentPath: "", localConfigExists: false }),
+    /config\/target\.default\.json$/,
+  );
+  assert.match(
+    resolveTargetConfigPath({ environmentPath: "", localConfigExists: true }),
+    /config\/target\.json$/,
+  );
+  assert.equal(
+    resolveTargetConfigPath({ environmentPath: "./custom-target.json", localConfigExists: false }),
+    path.resolve("./custom-target.json"),
+  );
+});
+
+test("missing target CLI is reported without a raw spawn error", () => {
+  const error = Object.assign(new Error("spawn gigacode ENOENT"), { code: "ENOENT" });
+  assert.equal(
+    formatTargetRuntimeError(error, "gigacode"),
+    "GigaCode CLI «gigacode» не найден. Установите CLI или укажите полный путь в config/target.json.",
+  );
+});
+
+test("target command lookup accepts PATH executables and explains a missing command", async () => {
+  assert.ok(await requireTargetCommand(path.basename(process.execPath), {
+    PATH: path.dirname(process.execPath),
+  }));
+  await assert.rejects(
+    requireTargetCommand("definitely-missing-contractility-cli", { PATH: "" }),
+    /GigaCode CLI «definitely-missing-contractility-cli» не найден/,
+  );
+});
 
 test("vendored OCR files match the committed manifest", async () => {
   const result = await verifyVendorIntegrity();

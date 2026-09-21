@@ -1,7 +1,35 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 import path from "node:path";
 import { readJson } from "./fs-utils.mjs";
 
 const PLACEHOLDER_MODEL = /^(MODEL_|CHANGE_ME|<)/i;
+
+export async function requireTargetCommand(command, environment = process.env) {
+  const value = String(command ?? "").trim();
+  const extensions = process.platform === "win32"
+    ? String(environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  const candidates = value.includes(path.sep) || path.isAbsolute(value)
+    ? [path.resolve(value)]
+    : String(environment.PATH ?? "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .flatMap((directory) => extensions.map((extension) => path.join(directory, `${value}${extension}`)));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  const error = new Error(
+    `GigaCode CLI «${value || "gigacode"}» не найден. Установите CLI или укажите полный путь в config/target.json.`,
+  );
+  error.code = "TARGET_COMMAND_NOT_FOUND";
+  throw error;
+}
 
 export async function loadTargetConfig(configPath, { allowPlaceholders = false } = {}) {
   const config = await readJson(configPath);

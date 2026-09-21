@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   mkdir,
   open,
@@ -12,7 +13,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareCase, validateDocumentId, validateFormationRequest } from "./target/case-store.mjs";
-import { loadTargetConfig } from "./target/config.mjs";
+import { loadTargetConfig, requireTargetCommand } from "./target/config.mjs";
 import {
   atomicWriteJson,
   atomicWriteText,
@@ -32,6 +33,8 @@ import {
 import { validateMasterContract } from "../public/master-contract.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const localTargetConfigPath = path.join(projectRoot, "config/target.json");
+const defaultTargetConfigPath = path.join(projectRoot, "config/target.default.json");
 const JSON_LIMIT = 128 * 1024 * 1024;
 const FILE_LIMIT = 1024 * 1024 * 1024;
 const SAFE_ID = /^(?:stage|case|run|job|download)-[a-zA-Z0-9-]+$/;
@@ -41,6 +44,21 @@ class HttpError extends Error {
     super(message);
     this.statusCode = statusCode;
   }
+}
+
+export function resolveTargetConfigPath({
+  environmentPath = process.env.CONTRACTILITY_TARGET_CONFIG,
+  localConfigExists = existsSync(localTargetConfigPath),
+} = {}) {
+  if (environmentPath) return path.resolve(environmentPath);
+  return localConfigExists ? localTargetConfigPath : defaultTargetConfigPath;
+}
+
+export function formatTargetRuntimeError(error, command = "gigacode") {
+  if (error?.code === "ENOENT" || /\bspawn\s+\S+\s+ENOENT\b/i.test(error?.message ?? "")) {
+    return `GigaCode CLI «${command}» не найден. Установите CLI или укажите полный путь в config/target.json.`;
+  }
+  return error?.message ?? String(error);
 }
 
 function apiHeaders(securityHeaders, extra = {}) {
@@ -439,10 +457,9 @@ async function writeRunDiagnosticBundle(runId, runDirectory, config) {
 export function createUiWorkflowApi({
   securityHeaders,
   dataRoot = path.join(projectRoot, "data"),
-  targetConfigPath = process.env.CONTRACTILITY_TARGET_CONFIG
-    ? path.resolve(process.env.CONTRACTILITY_TARGET_CONFIG)
-    : path.join(projectRoot, "config/target.json"),
+  targetConfigPath = resolveTargetConfigPath(),
   runTarget = createAndRun,
+  checkTargetCommand = runTarget === createAndRun,
 } = {}) {
   const sessionToken = randomBytes(32).toString("hex");
   const stagingRoot = path.join(dataRoot, "ui-staging");
@@ -453,6 +470,7 @@ export function createUiWorkflowApi({
   async function targetStatus() {
     try {
       const config = await loadTargetConfig(targetConfigPath);
+      if (checkTargetCommand) await requireTargetCommand(config.gigacode.command);
       return {
         ready: true,
         models: {
@@ -638,7 +656,7 @@ export function createUiWorkflowApi({
       Object.assign(job, {
         status: "failed",
         completedAt: new Date().toISOString(),
-        error: error.message ?? String(error),
+        error: formatTargetRuntimeError(error, config.gigacode.command),
         runId: error.runId ?? job.runId,
         runDirectory: error.runDirectory ?? job.runDirectory,
       });
