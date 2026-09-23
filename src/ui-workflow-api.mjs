@@ -27,6 +27,7 @@ import {
   readRunMaster,
   createAndRun,
   finalizeRun,
+  reconcileBlockedCandidate,
   verifyRun,
 } from "./target/runner.mjs";
 
@@ -337,7 +338,10 @@ function gigacodeStatusFromAgents(agents) {
 }
 
 async function readRunSummary(runDirectory) {
-  const state = await readJson(path.join(runDirectory, "state.json"));
+  let state = await readJson(path.join(runDirectory, "state.json"));
+  if (state.status === "blocked") {
+    state = await reconcileBlockedCandidate(runDirectory).catch(() => state);
+  }
   const round = await readCurrentRound(runDirectory, state);
   const agents = await readAgentStatuses(runDirectory);
   return {
@@ -733,6 +737,7 @@ export function createUiWorkflowApi({
       approver,
       candidateSha256: String(body.candidateSha256 ?? ""),
       findingsSha256: String(body.findingsSha256 ?? ""),
+      acknowledgeBlocker: body.acknowledgeBlocker === true,
     });
     sendJson(response, securityHeaders, 200, result);
   }
@@ -746,7 +751,10 @@ export function createUiWorkflowApi({
 
   async function resolveDownload(runId, kind) {
     const { config, runDirectory } = await requireRunDirectory(runId);
-    const state = await readJson(path.join(runDirectory, "state.json"));
+    let state = await readJson(path.join(runDirectory, "state.json"));
+    if (kind === "candidate" && state.status === "blocked") {
+      state = await reconcileBlockedCandidate(runDirectory);
+    }
     if (["master", "master-text"].includes(kind)) {
       const master = await readRunMaster(runDirectory);
       if (kind === "master") {

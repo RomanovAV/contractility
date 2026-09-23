@@ -2383,10 +2383,13 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       });
       await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
       if (consensus.status === "blocked") {
+        const blockedCandidate = await validateCandidate(roundDirectory, referenceInventory);
         state = await writeState(runDirectory, {
           ...state,
           status: "blocked",
           round,
+          candidateSha256: blockedCandidate.candidateSha256,
+          candidatePath: path.relative(runDirectory, blockedCandidate.candidatePath),
           findingsSha256,
           blocker: consensus.summary,
         });
@@ -2497,9 +2500,11 @@ export async function approveRun({
   approver,
   candidateSha256,
   findingsSha256,
+  acknowledgeBlocker = false,
 }) {
   const state = await readJson(path.join(runDirectory, "state.json"));
-  if (state.status !== "awaiting-human-approval") {
+  const acceptingBlockedCandidate = state.status === "blocked" && acknowledgeBlocker === true;
+  if (state.status !== "awaiting-human-approval" && !acceptingBlockedCandidate) {
     throw new Error(`Подтверждение невозможно в состоянии ${state.status}.`);
   }
   if (state.candidateSha256 !== candidateSha256 || state.findingsSha256 !== findingsSha256) {
@@ -2515,11 +2520,69 @@ export async function approveRun({
     approver,
     candidateSha256,
     findingsSha256,
-    notice: "Аудиторское подтверждение процесса; не является электронной подписью.",
+    ...(acceptingBlockedCandidate ? {
+      blockerAcknowledged: true,
+      blocker: state.blocker ?? "Автоматический контур остановлен для ручного решения.",
+    } : {}),
+    notice: acceptingBlockedCandidate
+      ? "Проверяющий принял кандидат с нерешёнными замечаниями; подтверждение не является электронной подписью."
+      : "Аудиторское подтверждение процесса; не является электронной подписью.",
   };
   await atomicWriteJson(path.join(runDirectory, "approval/approval.json"), approval);
-  const nextState = await writeState(runDirectory, { ...state, status: "approved" });
+  const nextState = await writeState(runDirectory, {
+    ...state,
+    status: "approved",
+    ...(acceptingBlockedCandidate ? {
+      blockerAcknowledged: {
+        approver,
+        acknowledgedAt: approval.approvedAt,
+      },
+    } : {}),
+  });
   return { approval, state: nextState };
+}
+
+export async function reconcileBlockedCandidate(runDirectory) {
+  const initialState = await readJson(path.join(runDirectory, "state.json"));
+  if (
+    initialState.status !== "blocked"
+    || !Number.isInteger(initialState.round)
+    || initialState.round < 1
+  ) return initialState;
+  const fallbackCandidatePath = `rounds/${String(initialState.round).padStart(2, "0")}/candidate.docx`;
+  const candidateRelativePath = initialState.candidatePath ?? fallbackCandidatePath;
+  const existingPath = path.join(runDirectory, candidateRelativePath);
+  const existingSha256 = await sha256File(existingPath).catch(() => null);
+  if (
+    initialState.candidateSha256
+    && existingSha256 === initialState.candidateSha256
+    && initialState.candidatePath
+  ) return initialState;
+
+  const release = await acquireRunLock(runDirectory);
+  try {
+    const state = await readJson(path.join(runDirectory, "state.json"));
+    if (state.status !== "blocked") return state;
+    if (existingSha256 === state.candidateSha256 && !state.candidatePath) {
+      return writeState(runDirectory, {
+        ...state,
+        candidatePath: candidateRelativePath,
+      });
+    }
+    const referenceInventory = await readJson(path.join(runDirectory, "reference-inventory.json"));
+    const roundDirectory = path.join(
+      runDirectory,
+      `rounds/${String(state.round).padStart(2, "0")}`,
+    );
+    const candidate = await validateCandidate(roundDirectory, referenceInventory);
+    return writeState(runDirectory, {
+      ...state,
+      candidateSha256: candidate.candidateSha256,
+      candidatePath: path.relative(runDirectory, candidate.candidatePath),
+    });
+  } finally {
+    await release();
+  }
 }
 
 export async function finalizeRun(runDirectory) {

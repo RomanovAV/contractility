@@ -29,6 +29,7 @@ import {
   createAndRun,
   finalizeRun,
   parseProducerStatus,
+  reconcileBlockedCandidate,
   verifyRun,
 } from "../src/target/runner.mjs";
 import {
@@ -1283,6 +1284,54 @@ test("blocked review state retains a downloadable verified candidate", async () 
       sha256(await readFile(path.join(run.runDirectory, run.state.candidatePath))),
       run.state.candidateSha256,
     );
+    await writeFile(path.join(run.runDirectory, "state.json"), `${JSON.stringify({
+      ...run.state,
+      candidateSha256: "0".repeat(64),
+    }, null, 2)}\n`);
+    const reconciled = await reconcileBlockedCandidate(run.runDirectory);
+    assert.equal(
+      sha256(await readFile(path.join(run.runDirectory, reconciled.candidatePath))),
+      reconciled.candidateSha256,
+    );
+    assert.notEqual(reconciled.candidateSha256, "0".repeat(64));
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("partially fixed blocked review stores the current candidate and allows explicit acceptance", async () => {
+  await chmod(fakeGigacode, 0o755);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-partial-blocked-"));
+  const prepared = await prepareSimpleCase(temporary);
+  process.env.FAKE_GIGACODE_MODE = "partial-fix-blocked";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const run = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(run.state.status, "blocked");
+    const candidate = await readFile(path.join(run.runDirectory, run.state.candidatePath));
+    assert.equal(sha256(candidate), run.state.candidateSha256);
+    assert.match(
+      await readFile(path.join(run.runDirectory, "rounds/01/package/word/document.xml"), "utf8"),
+      /исправлено/,
+    );
+    await assert.rejects(approveRun({
+      runDirectory: run.runDirectory,
+      approver: "Тест",
+      candidateSha256: run.state.candidateSha256,
+      findingsSha256: run.state.findingsSha256,
+    }), /Подтверждение невозможно/);
+    const accepted = await approveRun({
+      runDirectory: run.runDirectory,
+      approver: "Тест",
+      candidateSha256: run.state.candidateSha256,
+      findingsSha256: run.state.findingsSha256,
+      acknowledgeBlocker: true,
+    });
+    assert.equal(accepted.state.status, "approved");
+    assert.equal(accepted.approval.blockerAcknowledged, true);
+    assert.match(accepted.approval.blocker, /решения человека/);
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }

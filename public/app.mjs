@@ -1950,10 +1950,15 @@ function renderFormationRun(job) {
     && Number.isInteger(runState?.round)
     && runState.round > 0,
   );
+  const blockedCandidateDecision = status === "blocked" && candidateReady;
+  const canApproveCandidate = awaitingApproval || blockedCandidateDecision;
   elements["download-diagnostics"].disabled = !state.formationRunId;
   elements["download-candidate"].disabled = !candidateReady;
-  elements["approver-name"].disabled = !awaitingApproval;
-  elements["approve-candidate"].disabled = !awaitingApproval
+  elements["approver-name"].disabled = !canApproveCandidate;
+  elements["approve-candidate"].textContent = blockedCandidateDecision
+    ? "Принять решение и продолжить"
+    : "Подтвердить хеши";
+  elements["approve-candidate"].disabled = !canApproveCandidate
     || !elements["approver-name"].value.trim();
   elements["finalize-run"].disabled = !approved;
   elements["download-final"].disabled = !finalized;
@@ -1961,10 +1966,11 @@ function renderFormationRun(job) {
   if (job.status === "failed" || status === "failed") {
     setRunStatus("Ошибка", job.error ?? runState?.error ?? "Запуск завершился с ошибкой.", "failed");
   } else if (status === "blocked") {
+    const unresolvedCount = run?.consensus?.unresolvedFindingIds?.length ?? 0;
     setRunStatus(
       "Требуется решение",
       candidateReady
-        ? "Автоматический контур остановлен, но кандидат доступен для скачивания и ручной проверки."
+        ? `Кандидат сохранён. Скачайте и проверьте его${unresolvedCount > 0 ? `; нерешённых замечаний: ${unresolvedCount}` : ""}. Если принимаете документ с указанными замечаниями, укажите ФИО и нажмите «Принять решение и продолжить».`
         : runState.blocker ?? "Автоматический контур остановлен до создания кандидата.",
       "failed",
     );
@@ -2252,6 +2258,7 @@ async function approveFormationCandidate() {
         approver,
         candidateSha256: runState.candidateSha256,
         findingsSha256: runState.findingsSha256,
+        acknowledgeBlocker: runState.status === "blocked",
       }),
     });
     await refreshFormationRun();
@@ -2286,6 +2293,9 @@ async function downloadRunFile(kind) {
         body: JSON.stringify({ kind }),
       },
     );
+    if (kind === "candidate" && state.formationRun?.state?.status === "blocked") {
+      await refreshFormationRun();
+    }
     if (
       typeof ticket.downloadUrl !== "string"
       || !ticket.downloadUrl.startsWith("/api/workflow/downloads/")
@@ -2450,8 +2460,12 @@ elements["start-formation"].addEventListener("click", () => {
   });
 });
 elements["approver-name"].addEventListener("input", () => {
+  const runState = state.formationRun?.state;
+  const candidateDecisionAvailable = ["awaiting-human-approval", "blocked"].includes(
+    runState?.status,
+  ) && Boolean(runState?.candidateSha256);
   elements["approve-candidate"].disabled =
-    state.formationRun?.state?.status !== "awaiting-human-approval"
+    !candidateDecisionAvailable
     || !elements["approver-name"].value.trim();
 });
 elements["approve-candidate"].addEventListener("click", () => {

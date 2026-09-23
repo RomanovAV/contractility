@@ -444,6 +444,42 @@ if (model === "missing-model") {
         confidence: 0.99,
       }],
     });
+  } else if (mode.includes("partial-fix-blocked")) {
+    if (model === "review-model-a") {
+      emit({
+        verdict: "changes-required",
+        findings: [
+          {
+            severity: "major",
+            category: "legal-delta",
+            target: "word/document.xml paragraph 1",
+            sourceDocumentId: "document-2",
+            page: 1,
+            clause: "1",
+            evidence: "Изменение",
+            observed: "Требуется подтверждённая правка",
+            impact: "Кандидат требует проверки",
+            proposedAction: "Исправить текст",
+            confidence: 0.99,
+          },
+          {
+            severity: "major",
+            category: "cross-reference",
+            target: "Неоднозначная ссылка",
+            sourceDocumentId: "document-2",
+            page: 1,
+            clause: "2",
+            evidence: "Изменение",
+            observed: "Требуется решение человека",
+            impact: "Кандидат требует проверки",
+            proposedAction: "Выбрать адресуемый пункт",
+            confidence: 0.99,
+          },
+        ],
+      });
+    } else {
+      emit({ verdict: "pass", findings: [] });
+    }
   } else if (mode.includes("fix-once")) {
     const roundDirectory = process.cwd();
     const xml = await readFile(path.join(roundDirectory, "package/word/document.xml"), "utf8");
@@ -531,7 +567,21 @@ if (model === "missing-model") {
   if (mode.includes("synthesis-writes-candidate")) {
     await writeFile(path.join(roundDirectory, "candidate.docx"), "model-written-candidate");
   }
-  if (mode.includes("synthesis-blocked") && task.findingIds.length > 0) {
+  if (mode.includes("partial-fix-blocked") && task.findingIds.length > 1) {
+    const documentPath = path.join(roundDirectory, "package/word/document.xml");
+    const xml = await readFile(documentPath, "utf8");
+    await writeFile(
+      documentPath,
+      xml.replace("Тестовое дополнительное соглашение", "Тестовое дополнительное соглашение — исправлено"),
+    );
+    emit({
+      status: "blocked",
+      acceptedFindingIds: [task.findingIds[0]],
+      rejectedFindingIds: [],
+      unresolvedFindingIds: task.findingIds.slice(1),
+      summary: "Одно замечание исправлено, второе требует решения человека.",
+    });
+  } else if (mode.includes("synthesis-blocked") && task.findingIds.length > 0) {
     emit({
       status: "blocked",
       acceptedFindingIds: [],

@@ -489,6 +489,21 @@ test("workflow API protects mutations and prepares a verified local case", async
     Buffer.from(await blockedCandidateResponse.arrayBuffer()),
     Buffer.from("candidate docx"),
   );
+  const acceptBlockedResponse = await fetch(
+    `${origin}/api/workflow/runs/${job.runId}/approve`,
+    {
+      method: "POST",
+      headers: { ...securedHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approver: "Проверяющий",
+        candidateSha256: readyState.candidateSha256,
+        findingsSha256: readyState.findingsSha256,
+        acknowledgeBlocker: true,
+      }),
+    },
+  );
+  assert.equal(acceptBlockedResponse.status, 200);
+  assert.equal((await acceptBlockedResponse.json()).approval.blockerAcknowledged, true);
   await writeFile(runStatePath, `${JSON.stringify(readyState, null, 2)}\n`);
 
   const ticketResponse = await fetch(
