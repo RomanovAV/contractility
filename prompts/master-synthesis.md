@@ -14,6 +14,12 @@ Classify every finding id exactly once:
 - unresolved: page images or human judgment are required, OCR is ambiguous, or an exact value
   cannot be established from the OCR text alone.
 
+Use the validated OCR corrections register as part of the evidence chain. Reject a finding that
+attacks a correctly applied registered lexical correction merely because raw OCR differs. An
+`ocr-normalization` finding may be accepted when it restores an unambiguous ordinary word or
+defined abbreviation and the correction is supported by the register, a repeated readable form,
+or the document's explicit definition.
+
 All `ocr-quality` findings must be unresolved. Never accept a proposed correction that guesses or
 normalizes a date, amount, percentage, contract number, party detail, signature, or other exact
 value. Models cannot see page images. Do not accept broad rewrites or improvements that are not

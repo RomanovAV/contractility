@@ -62,6 +62,7 @@ import {
   masterReviewTargetHash,
   validateMasterContract,
 } from "../../public/master-contract.mjs";
+import { validateOcrCorrections } from "../../public/ocr-corrections.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const promptRoot = path.join(projectRoot, "prompts");
@@ -161,6 +162,8 @@ function formationPolicy() {
     requiredCoverage: "all-changes-declared-by-proposed-agreement",
     placeholderPolicy: "resolve-or-preserve-empty-and-mark-human-required",
     unresolvedFieldMarker: HUMAN_REQUIRED_MARKER,
+    ocrLexicalCorrectionPolicy: "correct-before-master-and-record-source-page-basis",
+    ocrProtectedValuePolicy: "never-auto-correct-exact-values-party-details-or-signatures",
     allowUnresolvedFields: true,
     allowUnresolvedTemplateFields: true,
     requireEvidenceForEveryChange: true,
@@ -189,6 +192,16 @@ async function requireReconstructionArtifacts(roundDirectory) {
   );
   validateReconstructionScope(scope, evidenceManifest);
   return { currentContract, reconstructionScope };
+}
+
+async function requireOcrCorrections(roundDirectory, signedDocuments) {
+  const correctionsPath = path.join(
+    roundDirectory,
+    "artifacts/ocr-corrections.json",
+  );
+  const corrections = await readJson(correctionsPath);
+  validateOcrCorrections(corrections, signedDocuments);
+  return correctionsPath;
 }
 
 async function requireChangeArtifacts(roundDirectory) {
@@ -353,7 +366,16 @@ function producerArtifactRetryPrompt({
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-  const recoveryInstructions = stage === "reconstruct"
+  const recoveryInstructions = stage === "ocr-correct"
+    ? `- re-read the trusted task and immutable raw OCR evidence, then overwrite
+  artifacts/ocr-corrections.json through a JSON serializer;
+- record only short, unambiguous lexical corrections; never automatically change digits,
+  dates, amounts, percentages, identifiers, contact details, party/person names, or signatures;
+- copy every sourceDocumentId and page verbatim from the trusted task and ensure sourceText occurs
+  exactly on that raw OCR page;
+- move ambiguous fragments to unresolved with the required human marker rather than guessing;
+- parse and verify the completed JSON before returning the status.`
+    : stage === "reconstruct"
     ? `- re-read the trusted task and OCR evidence, then overwrite reconstruction-scope.json
   through a JSON serializer;
 - copy each sourceDocumentId verbatim from reconstruction-task.json.evidenceDocuments;
@@ -531,7 +553,9 @@ async function runProducerStage({
       result = statusRetry;
     }
     if (status.status === "blocked") {
-      const unresolvedRecordingRule = stage === "reconstruct"
+      const unresolvedRecordingRule = stage === "ocr-correct"
+        ? "record ambiguous OCR fragments in ocr-corrections.json.unresolved with the exact marker"
+        : stage === "reconstruct"
         ? "record markers in reconstruction-scope.json/current-contract.md and set uncertain instruments to decision=unresolved; the planning stage will copy them into unresolvedFields"
         : "record every such value in change-register.json.unresolvedFields";
       const escapedReason = String(
@@ -1062,6 +1086,7 @@ async function createMasterReviewSandbox({
     currentContract: await readFile(path.join(directory, "artifacts/current-contract.md"), "utf8"),
     reconstructionScope: await readJson(path.join(directory, "artifacts/reconstruction-scope.json")),
     signedDocuments,
+    ocrCorrections: await readJson(path.join(directory, "artifacts/ocr-corrections.json")),
   });
   if (copiedTargetSha256 !== targetSha256) {
     await rm(directory, { recursive: true, force: true });
@@ -1085,6 +1110,9 @@ async function masterReviewSandboxWasMutated(sandbox) {
         path.join(sandbox.directory, "artifacts/reconstruction-scope.json"),
       ),
       signedDocuments: sandbox.signedDocuments,
+      ocrCorrections: await readJson(
+        path.join(sandbox.directory, "artifacts/ocr-corrections.json"),
+      ),
     }) !== sandbox.targetSha256;
   } catch {
     return true;
@@ -1117,13 +1145,14 @@ async function runMasterReviewer({
     policy: {
       ...formationPolicy(),
       evidenceBoundary: "ocr-text-only-no-page-images",
-      ocrCorrectionPolicy: "report-suspected-errors-for-human-verification-never-auto-correct",
+      ocrCorrectionPolicy: "accept-validated-lexical-corrections-and-escalate-protected-or-ambiguous-values",
       exactValuePolicy: "never-infer-or-normalize-dates-amounts-percentages-identifiers-or-party-details",
       reviewMode: "read-only",
     },
     paths: {
       evidenceManifest: "evidence/manifest.json",
       evidenceDocuments: "evidence/documents",
+      ocrCorrections: "artifacts/ocr-corrections.json",
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
     },
@@ -1315,12 +1344,14 @@ async function runMasterSynthesis({
     policy: {
       evidenceBoundary: "ocr-text-only-no-page-images",
       ocrQualityFindings: "always-unresolved-for-human-page-check",
+      ocrNormalizationFindings: "accept-only-short-unambiguous-lexical-corrections",
       acceptedFindingPolicy: "only-concrete-correction-fully-supported-by-ocr-text",
       exactValuePolicy: "never-infer-dates-amounts-percentages-identifiers-or-party-details",
     },
     paths: {
       evidenceManifest: "evidence/manifest.json",
       evidenceDocuments: "evidence/documents",
+      ocrCorrections: "artifacts/ocr-corrections.json",
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
       untrustedFindings: path.basename(findingsPath),
@@ -1451,6 +1482,11 @@ async function runMasterFix({
   onGigacodeEvent,
   signedDocuments,
 }) {
+  const ocrCorrectionsPath = path.join(
+    roundDirectory,
+    "artifacts/ocr-corrections.json",
+  );
+  const originalOcrCorrectionsSha256 = await sha256File(ocrCorrectionsPath);
   const findingMap = masterFindingMap(reports);
   const acceptedFindings = consensus.acceptedFindingIds.map((id) => findingMap.get(id));
   const findingsPath = path.join(roundDirectory, "master-accepted-findings.json");
@@ -1474,6 +1510,7 @@ async function runMasterFix({
     paths: {
       evidenceManifest: "evidence/manifest.json",
       evidenceDocuments: "evidence/documents",
+      ocrCorrections: "artifacts/ocr-corrections.json",
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
       acceptedFindings: path.basename(findingsPath),
@@ -1505,6 +1542,11 @@ async function runMasterFix({
     path.join(roundDirectory, "evidence"),
     evidenceManifestSha256,
   );
+  await requireOcrCorrections(roundDirectory, signedDocuments);
+  if (await sha256File(ocrCorrectionsPath) !== originalOcrCorrectionsSha256
+    && !acceptedFindings.some((finding) => finding?.category === "ocr-normalization")) {
+    throw new Error("Producer изменил реестр OCR без принятого замечания о нормализации.");
+  }
   await requireReconstructionArtifacts(roundDirectory);
   const correctedTargetSha256 = await masterReviewTargetHash({
     currentContract: await readFile(
@@ -1515,6 +1557,9 @@ async function runMasterFix({
       path.join(roundDirectory, "artifacts/reconstruction-scope.json"),
     ),
     signedDocuments,
+    ocrCorrections: await readJson(
+      path.join(roundDirectory, "artifacts/ocr-corrections.json"),
+    ),
   });
   if (correctedTargetSha256 === targetSha256) {
     throw new Error("Producer не изменил мастер-договор по подтверждённым замечаниям.");
@@ -1897,16 +1942,69 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
       await validateMasterContract(importedMaster);
       await atomicWriteText(path.join(firstRoundDirectory, "artifacts/current-contract.md"), importedMaster.payload.currentContract);
       await atomicWriteJson(path.join(firstRoundDirectory, "artifacts/reconstruction-scope.json"), importedMaster.payload.reconstructionScope);
+      if (importedMaster.payload.ocrCorrections) {
+        await atomicWriteJson(
+          path.join(firstRoundDirectory, "artifacts/ocr-corrections.json"),
+          importedMaster.payload.ocrCorrections,
+        );
+      }
       await requireReconstructionArtifacts(firstRoundDirectory);
       state = await writeState(runDirectory, { ...state, round: 1, masterSha256: importedMaster.sha256 });
       await appendEvent(runDirectory, "master.reused", { sha256: importedMaster.sha256, approval: importedMaster.approval });
     } else {
+      await atomicWriteJson(path.join(firstRoundDirectory, "ocr-correction-task.json"), {
+        schemaVersion: "contractility.producer-ocr-correction-task.v1",
+        ...sharedProducerTask,
+        paths: {
+          evidenceManifest: "evidence/manifest.json",
+          evidenceDocuments: "evidence/documents",
+          ocrCorrections: "artifacts/ocr-corrections.json",
+        },
+      });
+      state = await writeState(runDirectory, {
+        ...state,
+        status: "correcting-ocr",
+        round: 1,
+      });
+      const ocrCorrection = await runProducerStage({
+        stage: "ocr-correct",
+        expectedStatus: "ocr-corrections-ready",
+        promptName: "producer-ocr-correct.md",
+        taskName: "ocr-correction-task.json",
+        roundDirectory: firstRoundDirectory,
+        config,
+        runDirectory,
+        onGigacodeEvent: gigacodeEvents.record,
+        verifyIntegrity: async () => {
+          await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+          await verifyEvidenceWorkspace(
+            path.join(firstRoundDirectory, "evidence"),
+            evidenceManifestSha256,
+          );
+        },
+        validateArtifacts: () => requireOcrCorrections(
+          firstRoundDirectory,
+          formationRequest.inputs.signedDocuments,
+        ),
+      });
+      if (ocrCorrection.blocked) {
+        state = await writeState(runDirectory, {
+          ...state,
+          status: "blocked",
+          blocker: ocrCorrection.blocked,
+        });
+        return { runId, runDirectory, state };
+      }
+      const ocrCorrectionsSha256 = await sha256File(
+        path.join(firstRoundDirectory, "artifacts/ocr-corrections.json"),
+      );
       await atomicWriteJson(path.join(firstRoundDirectory, "reconstruction-task.json"), {
         schemaVersion: "contractility.producer-reconstruction-task.v1",
         ...sharedProducerTask,
         paths: {
           evidenceManifest: "evidence/manifest.json",
           evidenceDocuments: "evidence/documents",
+          ocrCorrections: "artifacts/ocr-corrections.json",
           currentContract: "artifacts/current-contract.md",
           reconstructionScope: "artifacts/reconstruction-scope.json",
           blocker: "artifacts/blocker.json",
@@ -1932,6 +2030,12 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
             path.join(firstRoundDirectory, "evidence"),
             evidenceManifestSha256,
           );
+          if (await sha256File(path.join(
+            firstRoundDirectory,
+            "artifacts/ocr-corrections.json",
+          )) !== ocrCorrectionsSha256) {
+            throw new Error("Реестр исправлений OCR изменён во время реконструкции.");
+          }
         },
         validateArtifacts: () => requireReconstructionArtifacts(firstRoundDirectory),
       });
@@ -1947,7 +2051,8 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     }
     if (masterOnly) {
       const reviewHistory = [];
-      for (let round = 1; round <= config.review.maxRounds; round += 1) {
+      const finalVerificationRound = config.review.maxRounds + 1;
+      for (let round = 1; round <= finalVerificationRound; round += 1) {
         const roundDirectory = path.join(
           runDirectory,
           `rounds/${String(round).padStart(2, "0")}`,
@@ -1961,6 +2066,9 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
             path.join(roundDirectory, "artifacts/reconstruction-scope.json"),
           ),
           signedDocuments: formationRequest.inputs.signedDocuments,
+          ocrCorrections: await readJson(
+            path.join(roundDirectory, "artifacts/ocr-corrections.json"),
+          ),
         };
         const targetSha256 = await masterReviewTargetHash(masterPayload);
         state = await writeState(runDirectory, {
@@ -2033,6 +2141,9 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
             path.join(roundDirectory, "artifacts/reconstruction-scope.json"),
           ),
           signedDocuments: formationRequest.inputs.signedDocuments,
+          ocrCorrections: await readJson(
+            path.join(roundDirectory, "artifacts/ocr-corrections.json"),
+          ),
         }) !== targetSha256) {
           throw new Error("Мастер-договор изменён во время межмодельной проверки.");
         }
@@ -2071,11 +2182,12 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           consensus,
         });
         if (consensus.acceptedFindingIds.length > 0) {
-          if (round >= config.review.maxRounds) {
+          if (round > config.review.maxRounds) {
             state = await writeState(runDirectory, {
               ...state,
               status: "blocked",
-              blocker: `Мастер-договор не прошёл проверку после ${round} раундов исправлений.`,
+              blocker: `Мастер-договор не прошёл итоговую проверку после `
+                + `${config.review.maxRounds} раундов исправлений.`,
               findingsSha256: findingFingerprint(reports),
             });
             return { runId, runDirectory, state };

@@ -193,6 +193,7 @@ function stateLabel(status) {
   const labels = {
     created: "Создание запуска",
     "inputs-verified": "Входы проверены",
+    "correcting-ocr": "Исправление распознанного текста",
     "reconstructing-contract": "Реконструкция действующего договора",
     "reviewing-master": "Проверка мастер-договора по OCR-тексту",
     "fixing-master": "Исправление подтверждённых замечаний мастера",

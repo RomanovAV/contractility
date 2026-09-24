@@ -48,7 +48,7 @@ const elements = Object.fromEntries(
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
     "documents-list", "download-candidate", "download-diagnostics", "download-final", "download-json",
     "download-text", "draft-drop-zone",
-    "draft-file-input", "draft-summary",
+    "draft-file-input", "draft-summary", "restart-review-cycle", "review-cycle-file-input",
     "dpi-select", "drop-zone", "edit-note", "error-banner", "export-card", "file-input",
     "file-summary", "finalize-run", "force-ocr", "formation-run-card",
     "gigacode-activity", "gigacode-activity-detail", "gigacode-activity-time",
@@ -316,6 +316,7 @@ function setRunning(running) {
   elements["load-workspace-button"].disabled = locked;
   elements["workspace-file-input"].disabled = locked;
   elements["draft-file-input"].disabled = locked;
+  elements["review-cycle-file-input"].disabled = locked;
   elements["save-workspace"].disabled = locked || !isOcrComplete();
   elements["dpi-select"].disabled = locked;
   elements["force-ocr"].disabled = locked;
@@ -714,6 +715,7 @@ function resetDocuments() {
   elements["file-input"].value = "";
   elements["additional-file-input"].value = "";
   elements["draft-file-input"].value = "";
+  elements["review-cycle-file-input"].value = "";
   elements["workspace-file-input"].value = "";
   elements["file-summary"].replaceChildren();
   elements["file-summary"].hidden = true;
@@ -1698,6 +1700,7 @@ function renderRunStages(runState) {
     uploading: ["active", "", "", "", ""],
     created: ["active", "", "", "", ""],
     "inputs-verified": ["complete", "active", "", "", ""],
+    "correcting-ocr": ["complete", "active", "", "", ""],
     "reconstructing-contract": ["complete", "active", "", "", ""],
     "planning-changes": ["complete", "active", "", "", ""],
     "applying-changes": ["complete", "active", "", "", ""],
@@ -1954,6 +1957,8 @@ function renderFormationRun(job) {
   const canApproveCandidate = awaitingApproval || blockedCandidateDecision;
   elements["download-diagnostics"].disabled = !state.formationRunId;
   elements["download-candidate"].disabled = !candidateReady;
+  elements["restart-review-cycle"].hidden = !blockedCandidateDecision;
+  elements["restart-review-cycle"].disabled = !blockedCandidateDecision;
   elements["approver-name"].disabled = !canApproveCandidate;
   elements["approve-candidate"].textContent = blockedCandidateDecision
     ? "Принять решение и продолжить"
@@ -1970,7 +1975,7 @@ function renderFormationRun(job) {
     setRunStatus(
       "Требуется решение",
       candidateReady
-        ? `Кандидат сохранён. Скачайте и проверьте его${unresolvedCount > 0 ? `; нерешённых замечаний: ${unresolvedCount}` : ""}. Если принимаете документ с указанными замечаниями, укажите ФИО и нажмите «Принять решение и продолжить».`
+        ? `Кандидат сохранён. Скачайте и проверьте его${unresolvedCount > 0 ? `; нерешённых замечаний: ${unresolvedCount}` : ""}. Исправьте DOCX и нажмите «Новый цикл с исправленным DOCX» для повторной проверки. Если принимаете документ с указанными замечаниями, укажите ФИО и нажмите «Принять решение и продолжить».`
         : runState.blocker ?? "Автоматический контур остановлен до создания кандидата.",
       "failed",
     );
@@ -2353,6 +2358,23 @@ elements["draft-file-input"].addEventListener("change", (event) => {
     console.error(error);
     setError(`Не удалось прочитать DOCX: ${error.message ?? error}`);
   });
+});
+elements["restart-review-cycle"].addEventListener("click", () => {
+  elements["review-cycle-file-input"].value = "";
+  elements["review-cycle-file-input"].click();
+});
+elements["review-cycle-file-input"].addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  loadDraftAgreement(event.target.files)
+    .then(() => {
+      if (state.draftAgreement?.file !== file) return;
+      return launchFormation();
+    })
+    .catch((error) => {
+      console.error(error);
+      setError(`Не удалось начать новый цикл: ${error.message ?? error}`);
+    });
 });
 elements["reset-button"].addEventListener("click", resetDocuments);
 elements["start-button"].addEventListener("click", runOcr);

@@ -1,3 +1,5 @@
+import { validateOcrCorrections } from "./ocr-corrections.mjs";
+
 export const MASTER_SCHEMA = "contractility.master-contract.v1";
 
 export async function masterPayloadHash(payload) {
@@ -11,6 +13,7 @@ export async function masterReviewTargetHash(payload) {
     currentContract: payload.currentContract,
     reconstructionScope: payload.reconstructionScope,
     signedDocuments: payload.signedDocuments,
+    ocrCorrections: payload.ocrCorrections,
   });
 }
 
@@ -95,6 +98,9 @@ export function validateMasterStructure(master, { requireApproval = true } = {})
       throw new TypeError("История источников мастер-договора повреждена.");
     }
     ids.add(document.id);
+  }
+  if (master.payload.ocrCorrections != null) {
+    validateOcrCorrections(master.payload.ocrCorrections, signedDocuments);
   }
   const base = reconstructionScope.baseContract;
   if (base?.sourceDocumentId !== signedDocuments[0].id

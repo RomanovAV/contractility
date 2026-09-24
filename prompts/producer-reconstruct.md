@@ -16,6 +16,12 @@ Required work:
    The policy's exact unresolved-field marker is
    `________________________`. Never invent a value merely to avoid
    this marker.
+   Read `artifacts/ocr-corrections.json` before reconstructing any clause. Treat its validated
+   `corrections` as the corrected lexical reading of the cited raw OCR fragments. The raw
+   `evidence/` files remain the audit source and must not be modified. Carry each applied
+   correction's raw fragment, corrected form, source document, page, and basis in the applicable
+   clause provenance. Do not reverse a registered correction merely to match the raw OCR token.
+   Entries in `unresolved` remain human-review items and must never be guessed.
 2. Establish the base-contract identity only from the evidence document whose
    role is `contract`. Search every page of that document and use both its
    contract number and contract date. If the title-page identity is corrupted,
@@ -67,6 +73,9 @@ Required work:
    fragment. Wherever an exact value or clause fragment cannot be established,
    leave it unresolved and insert the exact underscore placeholder instead of
    inventing content or stopping.
+   Use corrected lexical terms from the OCR correction register (for example, `Банк` and `СБП`)
+   in the operative master text. Do not reproduce a known raw OCR artifact such as `Bask`, `CBI`,
+   or `CBII` when the register contains its validated correction.
 10. Parse `artifacts/reconstruction-scope.json` with a JSON parser and verify its
    required objects and arrays before returning the final status.
 11. Do not inspect or modify the candidate OOXML package during this phase.

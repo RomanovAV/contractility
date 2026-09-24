@@ -96,6 +96,8 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="formation-run-card"/);
   assert.match(indexHtml, /Рецензенты/);
   assert.match(indexHtml, /id="approve-candidate"/);
+  assert.match(indexHtml, /id="restart-review-cycle"/);
+  assert.match(indexHtml, /id="review-cycle-file-input"[^>]*\.docx/);
   assert.match(indexHtml, /id="download-diagnostics"/);
   assert.match(indexHtml, /id="download-final"/);
   assert.match(indexHtml, /id="save-workspace"/);

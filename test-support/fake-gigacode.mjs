@@ -65,6 +65,22 @@ if (model === "missing-model") {
   }
 } else if (prompt.includes('Return exactly {"status":"ok"}')) {
   emit({ status: "ok" });
+} else if (prompt.includes("correct unambiguous lexical OCR defects before master-contract reconstruction")) {
+  const task = JSON.parse(
+    await readFile(path.join(process.cwd(), "ocr-correction-task.json"), "utf8"),
+  );
+  await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8");
+  const artifacts = path.join(process.cwd(), "artifacts");
+  await mkdir(artifacts, { recursive: true });
+  await writeFile(
+    path.join(process.cwd(), task.paths.ocrCorrections),
+    `${JSON.stringify({
+      schemaVersion: "contractility.ocr-corrections.v1",
+      corrections: [],
+      unresolved: [],
+    }, null, 2)}\n`,
+  );
+  emit({ status: "ocr-corrections-ready" });
 } else if (prompt.includes("reconstruct the current contract from signed OCR evidence")) {
   const task = JSON.parse(
     await readFile(path.join(process.cwd(), "reconstruction-task.json"), "utf8"),
@@ -72,6 +88,7 @@ if (model === "missing-model") {
   const evidenceManifest = JSON.parse(
     await readFile(path.join(process.cwd(), task.paths.evidenceManifest), "utf8"),
   );
+  await readFile(path.join(process.cwd(), task.paths.ocrCorrections), "utf8");
   const artifacts = path.join(process.cwd(), "artifacts");
   await mkdir(artifacts, { recursive: true });
   const baseDocument = evidenceManifest.documents.find(

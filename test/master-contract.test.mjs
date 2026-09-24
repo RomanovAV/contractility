@@ -13,9 +13,13 @@ function payload() {
   return {
     currentContract: "Действующая редакция договора с сохранением всех условий и сведений об источниках. ".repeat(3),
     signedDocuments: [{ id: "document-1", order: 1, role: "contract", complete: true,
-      file: { name: "contract.pdf", sha256: "a".repeat(64) }, pages: [{ number: 1, text: "Договор №1 от 01.01.2025" }] }],
+      file: { name: "contract.pdf", sha256: "a".repeat(64) }, pages: [{ number: 1, text: "Договор №1 от 01.01.2025. Bask." }] }],
     reconstructionScope: { schemaVersion: "contractility.reconstruction-scope.v1",
       baseContract: { sourceDocumentId: "document-1", number: "1", date: "01.01.2025", page: 1, evidence: "Договор №1 от 01.01.2025" }, instruments: [] },
+    ocrCorrections: { schemaVersion: "contractility.ocr-corrections.v1", corrections: [{
+      sourceDocumentId: "document-1", page: 1, kind: "lexical", sourceText: "Bask",
+      correctedText: "Банк", basis: "defined-term", reason: "Определённый термин договора.",
+    }], unresolved: [] },
   };
 }
 
@@ -82,6 +86,7 @@ test("portable master binds the complete text, source history and approval", asy
     (value) => { value.payload.currentContract += "Изменение"; },
     (value) => { value.payload.signedDocuments[0].pages[0].text += "Изменение OCR"; },
     (value) => { value.payload.reconstructionScope.baseContract.number = "2"; },
+    (value) => { value.payload.ocrCorrections.corrections[0].correctedText = "Банка"; },
     (value) => { value.approval.sha256 = "0".repeat(64); },
     (value) => { value.approval = null; },
   ]) {

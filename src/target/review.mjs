@@ -9,6 +9,7 @@ const CATEGORIES = new Set([
   "document-fidelity",
   "missing-evidence",
   "security",
+  "ocr-normalization",
   "ocr-quality",
   "requirements",
 ]);
@@ -209,7 +210,7 @@ export function reviewOutputContract() {
 Do not save the report to a file. Do not return a prose confirmation, file path, or Markdown.
 {"verdict":"pass","findings":[]}
 or
-{"verdict":"changes-required","findings":[{"severity":"blocker|major|minor","category":"contract-reconstruction|legal-delta|cross-reference|document-fidelity|missing-evidence|security|ocr-quality|requirements","target":"candidate locator","sourceDocumentId":"document id or candidate.docx","page":1,"clause":"source clause or package path","evidence":"short exact observed fragment","observed":"confirmed problem","impact":"legal or document consequence","proposedAction":"smallest correction","confidence":0.0}]}
+{"verdict":"changes-required","findings":[{"severity":"blocker|major|minor","category":"contract-reconstruction|legal-delta|cross-reference|document-fidelity|missing-evidence|security|ocr-normalization|ocr-quality|requirements","target":"candidate locator","sourceDocumentId":"document id or candidate.docx","page":1,"clause":"source clause or package path","evidence":"short exact observed fragment","observed":"confirmed problem","impact":"legal or document consequence","proposedAction":"smallest correction","confidence":0.0}]}
 Maximum 20 findings. Do not report style preferences or unsupported suspicions.
 For paginated signed evidence, page must be a positive integer. For a defect supported only
 by a non-paginated candidate or OOXML package artifact, page must be null and target,

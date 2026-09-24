@@ -24,6 +24,7 @@
       "enum": [
         "created",
         "inputs-verified",
+        "correcting-ocr",
         "reconstructing-contract",
         "reviewing-master",
         "fixing-master",

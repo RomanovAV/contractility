@@ -45,6 +45,7 @@ import {
   HUMAN_REQUIRED_MARKER,
   validateReconstructionScope,
 } from "../src/target/scope.mjs";
+import { validateOcrCorrections } from "../public/ocr-corrections.mjs";
 
 const execFileAsync = promisify(execFile);
 const fakeGigacode = path.resolve("test-support/fake-gigacode.mjs");
@@ -479,6 +480,46 @@ test("review parser accepts domain findings", () => {
   }));
   assert.equal(report.findings.length, 1);
   assert.match(report.findings[0].id, /^finding-/);
+});
+
+test("OCR correction register accepts lexical repairs and rejects protected values", () => {
+  const signedDocuments = [{
+    id: "document-1",
+    pages: [{ number: 1, text: "Bask передаёт данные через CBI. Договор № 12." }],
+  }];
+  const register = {
+    schemaVersion: "contractility.ocr-corrections.v1",
+    corrections: [{
+      sourceDocumentId: "document-1",
+      page: 1,
+      kind: "lexical",
+      sourceText: "Bask",
+      correctedText: "Банк",
+      basis: "unambiguous-language-context",
+      reason: "Определённый термин договора однозначен по контексту.",
+    }, {
+      sourceDocumentId: "document-1",
+      page: 1,
+      kind: "lexical",
+      sourceText: "CBI",
+      correctedText: "СБП",
+      basis: "defined-term",
+      reason: "Аббревиатура определена в договоре.",
+    }],
+    unresolved: [],
+  };
+  assert.equal(validateOcrCorrections(register, signedDocuments), register);
+  assert.throws(
+    () => validateOcrCorrections({
+      ...register,
+      corrections: [{
+        ...register.corrections[0],
+        sourceText: "12",
+        correctedText: "17",
+      }],
+    }, signedDocuments),
+    /защищённое точное значение/,
+  );
 });
 
 test("review parser supports exact non-paginated artifact findings", () => {
@@ -1646,6 +1687,10 @@ test("master stage stops for approval and its portable file drives agreement for
   assert.equal(await exists(path.join(result.runDirectory, "rounds/01/package/word/document.xml")), false);
   assert.equal(await exists(path.join(result.runDirectory, "rounds/01/change-plan-task.json")), false);
   const pending = await readRunMaster(result.runDirectory);
+  assert.equal(
+    pending.payload.ocrCorrections.schemaVersion,
+    "contractility.ocr-corrections.v1",
+  );
   assert.equal(pending.payload.review.schemaVersion, "contractility.master-review.v1");
   assert.equal(pending.payload.review.reports.length, 3);
   assert.equal(pending.payload.review.reports.every((report) => report.verdict === "pass"), true);
@@ -1764,6 +1809,7 @@ test("master review fixes a confirmed OCR-supported defect and reruns every revi
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
     });
+    config.review.maxRounds = 1;
     const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
     assert.equal(result.state.status, "awaiting-master-approval");
     assert.equal(result.state.round, 2);
