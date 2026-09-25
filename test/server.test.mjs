@@ -96,6 +96,8 @@ test("local server exposes health and restrictive security headers", async (cont
   assert.match(indexHtml, /id="formation-run-card"/);
   assert.match(indexHtml, /Рецензенты/);
   assert.match(indexHtml, /id="approve-candidate"/);
+  assert.match(indexHtml, /id="master-risk-checkbox"/);
+  assert.match(indexHtml, /id="load-master-revision"/);
   assert.match(indexHtml, /id="restart-review-cycle"/);
   assert.match(indexHtml, /id="review-cycle-file-input"[^>]*\.docx/);
   assert.match(indexHtml, /id="download-diagnostics"/);
@@ -701,13 +703,25 @@ test("workflow API prepares a master without draft and accepts only an approved 
   assert.deepEqual(await projectDownload.json(), master);
   const textDownload = await api(`/runs/${runId}/files/master-text`);
   assert.equal(await textDownload.text(), master.payload.currentContract);
+  const revisedResponse = await api(`/runs/${runId}/revise-master`, {
+    method: "POST",
+    body: JSON.stringify({
+      currentContract: `${master.payload.currentContract}\n\nРучное уточнение по оригиналу.\n`,
+      sourceFileName: "master-corrected.txt",
+      masterSha256: master.sha256,
+    }),
+  });
+  assert.equal(revisedResponse.status, 200);
+  const revisedMaster = await revisedResponse.json();
+  assert.equal(revisedMaster.payload.humanRevisions.length, 1);
+  assert.match(revisedMaster.payload.currentContract, /Ручное уточнение по оригиналу/);
   const draft = Buffer.from("DOCX fixture");
   const agreementRequest = { ...request, workflowStage: "agreement", inputs: { signedDocuments: [], masterContract: master,
     newAgreementEdition: { file: { name: "draft.docx", sha256: sha256(draft), size: draft.length } } } };
   const unapproved = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: agreementRequest }) });
   assert.equal(unapproved.status, 400);
   await unapproved.arrayBuffer();
-  const approval = await api(`/runs/${runId}/approve-master`, { method: "POST", body: JSON.stringify({ approver: "Test reviewer", masterSha256: master.sha256 }) });
+  const approval = await api(`/runs/${runId}/approve-master`, { method: "POST", body: JSON.stringify({ approver: "Test reviewer", masterSha256: revisedMaster.sha256 }) });
   assert.equal(approval.status, 200);
   agreementRequest.inputs.masterContract = await approval.json();
   const reusedResponse = await api("/staging", { method: "POST", body: JSON.stringify({ formationRequest: agreementRequest }) });

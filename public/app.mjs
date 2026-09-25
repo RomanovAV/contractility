@@ -42,8 +42,8 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "start-master", "load-master", "master-file-input", "download-master", "download-master-text",
-    "master-status", "master-details", "master-text", "master-scope", "master-review-details", "master-review-summary", "master-review-findings", "master-approval", "master-approver", "approve-master", "run-title",
+    "start-master", "load-master", "master-file-input", "download-master", "download-master-text", "load-master-revision", "master-revision-file-input",
+    "master-status", "master-details", "master-text", "master-scope", "master-review-details", "master-review-summary", "master-review-findings", "master-approval", "master-approver", "master-risk-acknowledgement", "master-risk-checkbox", "approve-master", "run-title",
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
     "documents-list", "download-candidate", "download-diagnostics", "download-final", "download-json",
@@ -1497,6 +1497,7 @@ function invalidateMaster() {
   state.masterSyncKey = state.formationRunId;
   state.masterRevision += 1;
   state.masterRecoveryAllowed = false;
+  elements["master-risk-checkbox"].checked = false;
 }
 
 function renderMaster() {
@@ -1507,11 +1508,21 @@ function renderMaster() {
   elements["master-file-input"].disabled = locked;
   elements["download-master"].disabled = !master;
   elements["download-master-text"].disabled = !master;
+  elements["load-master-revision"].hidden = !master || Boolean(master.approval);
+  elements["load-master-revision"].disabled = locked || !master || !state.masterRunId
+    || Boolean(master.approval);
+  elements["master-revision-file-input"].disabled = locked;
   elements["master-details"].hidden = !master;
   elements["master-approval"].hidden = !master || Boolean(master.approval);
   elements["master-approver"].disabled = locked;
+  const blockingFindingCount = master?.payload.review?.blockingActionItemCount ?? 0;
+  elements["master-risk-acknowledgement"].hidden = !master
+    || Boolean(master.approval)
+    || blockingFindingCount === 0;
+  elements["master-risk-checkbox"].disabled = locked;
   elements["approve-master"].disabled = locked || !master || Boolean(master.approval)
-    || !state.masterRunId || !elements["master-approver"].value.trim();
+    || !state.masterRunId || !elements["master-approver"].value.trim()
+    || (blockingFindingCount > 0 && !elements["master-risk-checkbox"].checked);
   if (!master) {
     elements["master-text"].value = "";
     elements["master-review-summary"].textContent = "";
@@ -1528,9 +1539,13 @@ function renderMaster() {
     ? master.payload.review.actionItems
     : legacyReviewFindings;
   const reviewFindingCount = master.payload.review?.actionItemCount ?? reviewFindings.length;
+  const blockingReviewFindingCount = master.payload.review?.blockingActionItemCount ?? reviewFindingCount;
+  const advisoryReviewFindingCount = master.payload.review?.advisoryActionItemCount ?? 0;
   const omittedFindingCount = master.payload.review?.omittedActionItemCount ?? 0;
+  const humanRevisionCount = master.payload.humanRevisions?.length ?? 0;
   elements["master-status"].textContent = `Договор № ${identity.number} от ${identity.date}. `
     + `Межмодельная проверка: ${reviewFindingCount === 0 ? "замечаний нет" : `${reviewFindingCount} замеч.`}. `
+    + (humanRevisionCount > 0 ? `Ручных редакций текста: ${humanRevisionCount}. ` : "")
     + (master.approval ? `Проверил(а): ${master.approval.approver}. Готов к использованию с драфтом.` : "Редакция собрана. Требуется проверка человеком.");
   if (elements["master-text"].value !== master.payload.currentContract) elements["master-text"].value = master.payload.currentContract;
   elements["master-scope"].textContent = master.payload.signedDocuments.map((document) =>
@@ -1539,12 +1554,14 @@ function renderMaster() {
       `${item.sourceDocumentId}, стр. ${item.pages.join(", ")}: № ${item.agreementNumber} от ${item.agreementDate} — ${ { included: "применено", excluded: "исключено", unresolved: "требует проверки" }[item.decision] }. ${item.reason}`).join("\n");
   elements["master-review-summary"].textContent = reviewFindingCount === 0
     ? `${reviewReports.length} рецензента и арбитр подтвердили соответствие доступному OCR-тексту. Изображения страниц модели не проверяли.`
-    : `После арбитража осталось ${reviewFindingCount} вопрос. для проверки по оригиналу. Автоматически исправлялись только подтверждённые расхождения с OCR-текстом.${omittedFindingCount ? ` Ещё ${omittedFindingCount} сгруппировано в диагностике.` : ""}`;
+    : `После ограниченного цикла осталось: блокирующих — ${blockingReviewFindingCount}, информационных — ${advisoryReviewFindingCount}. Автоматически исправлялись только подтверждённые расхождения с OCR-текстом.${omittedFindingCount ? ` Ещё ${omittedFindingCount} сгруппировано в диагностике.` : ""}`;
   elements["master-review-findings"].replaceChildren();
   for (const finding of reviewFindings) {
     const item = globalThis.document.createElement("li");
     const badge = globalThis.document.createElement("b");
-    badge.textContent = finding.category === "ocr-quality" ? "OCR" : finding.severity;
+    badge.textContent = finding.priority === "blocking"
+      ? "Требует решения"
+      : finding.category === "ocr-quality" ? "OCR" : "К сведению";
     const location = finding.page == null
       ? finding.sourceDocumentId
       : `${finding.sourceDocumentId}, стр. ${finding.page}`;
@@ -1596,7 +1613,11 @@ async function approveMaster() {
   try {
     const master = await workflowJson(`/runs/${encodeURIComponent(runId)}/approve-master`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approver: elements["master-approver"].value.trim(), masterSha256: state.masterContract.sha256 }),
+      body: JSON.stringify({
+        approver: elements["master-approver"].value.trim(),
+        masterSha256: state.masterContract.sha256,
+        acknowledgeFindings: elements["master-risk-checkbox"].checked,
+      }),
     });
     state.masterContract = await validateMasterContract(master);
     setError("");
@@ -1605,6 +1626,38 @@ async function approveMaster() {
     setError(`Не удалось подтвердить мастер-договор: ${error.message}`);
   } finally {
     state.loading = false;
+    setRunning(false);
+  }
+}
+
+async function loadMasterRevision(file) {
+  if (!file || !state.masterRunId || !state.masterContract || inputsLocked()) return;
+  state.loading = true;
+  setRunning(false);
+  try {
+    if (file.size > 16 * 1024 * 1024) throw new Error("Текстовый файл превышает 16 МБ.");
+    const currentContract = await file.text();
+    const master = await workflowJson(
+      `/runs/${encodeURIComponent(state.masterRunId)}/revise-master`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentContract,
+          sourceFileName: file.name,
+          masterSha256: state.masterContract.sha256,
+        }),
+      },
+    );
+    state.masterContract = await validateMasterContract(master, { requireApproval: false });
+    elements["master-risk-checkbox"].checked = false;
+    setError("");
+    if (state.formationRunId === state.masterRunId) await refreshFormationRun();
+  } catch (error) {
+    setError(`Не удалось загрузить исправленный мастер: ${error.message ?? error}`);
+  } finally {
+    state.loading = false;
+    elements["master-revision-file-input"].value = "";
     setRunning(false);
   }
 }
@@ -1981,10 +2034,12 @@ function renderFormationRun(job) {
     );
   } else if (status === "awaiting-master-approval") {
     const findingCount = Number(runState.masterReviewFindingCount ?? 0);
+    const blockingCount = Number(runState.masterReviewBlockingCount ?? findingCount);
+    const advisoryCount = Number(runState.masterReviewAdvisoryCount ?? 0);
     setRunStatus(
       "Мастер-договор готов к проверке",
       findingCount > 0
-        ? `Рецензенты нашли ${findingCount} замеч. Проверьте указанные страницы по оригиналу и исправьте OCR при необходимости, затем пересоберите мастер.`
+        ? `Ограниченный автоматический цикл завершён: блокирующих замечаний — ${blockingCount}, информационных — ${advisoryCount}. Мастер сохранён; проверьте вопросы по оригиналам и примите решение.`
         : "Рецензенты не нашли расхождений с OCR-текстом. Проверьте текст и источники по оригиналам, затем подтвердите редакцию.",
     );
   } else if (status === "master-approved") {
@@ -2467,12 +2522,20 @@ elements["start-master"].addEventListener("click", () => launchFormation("master
 elements["load-master"].addEventListener("click", () => elements["master-file-input"].click());
 elements["master-file-input"].addEventListener("change", (event) => loadMasterFile(event.target.files[0]));
 elements["master-approver"].addEventListener("input", renderMaster);
+elements["master-risk-checkbox"].addEventListener("input", renderMaster);
 elements["approve-master"].addEventListener("click", () => approveMaster().catch((error) => setError(error.message)));
 elements["download-master"].addEventListener("click", () => {
   if (state.masterContract) download("contract.master-contract.json", "application/json", JSON.stringify(state.masterContract, null, 2) + "\n");
 });
 elements["download-master-text"].addEventListener("click", () => {
   if (state.masterContract) download("master-contract.txt", "text/plain;charset=utf-8", state.masterContract.payload.currentContract);
+});
+elements["load-master-revision"].addEventListener("click", () => {
+  elements["master-revision-file-input"].value = "";
+  elements["master-revision-file-input"].click();
+});
+elements["master-revision-file-input"].addEventListener("change", (event) => {
+  loadMasterRevision(event.target.files?.[0]).catch((error) => setError(error.message));
 });
 
 elements["start-formation"].addEventListener("click", () => {

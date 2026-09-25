@@ -36,7 +36,7 @@ function usage() {
 Commands:
   doctor --config PATH [--smoke]
   prepare --request PATH [--draft PATH] [--source ID=PATH...] --out DIR
-  approve-master --run DIR --master-sha256 HASH --approver NAME
+  approve-master --run DIR --master-sha256 HASH --approver NAME [--acknowledge-findings]
   run --case DIR --config PATH
   status --run DIR [--json]
   approve --run DIR --candidate-sha256 HASH --findings-sha256 HASH --approver NAME
@@ -52,7 +52,7 @@ function parseArgs(argv) {
     const token = rest[index];
     if (!token.startsWith("--")) throw new TypeError(`Неизвестный аргумент: ${token}`);
     const name = token.slice(2);
-    if (["smoke", "json"].includes(name)) {
+    if (["smoke", "json", "acknowledge-findings"].includes(name)) {
       options[name] = true;
       continue;
     }
@@ -189,6 +189,7 @@ async function main() {
       runDirectory: path.resolve(required(options, "run")),
       approver: required(options, "approver"),
       masterSha256: required(options, "master-sha256"),
+      acknowledgeFindings: options["acknowledge-findings"] === true,
     }), null, 2));
     return;
   }

@@ -29,6 +29,11 @@ normalizes a date, amount, percentage, contract number, party detail, signature,
 value. Models cannot see page images. Do not accept broad rewrites or improvements that are not
 the smallest evidence-backed correction.
 
+Read the decision memory named in the task. Preserve prior rejected and human-required decisions.
+Do not accept the same issue again without new explicit OCR evidence. In targeted mode, accept
+only a failed requested correction or a regression directly caused by that correction; route
+other new minor observations to human review instead of starting another broad rewrite.
+
 Return exactly one JSON object:
 {"status":"done|fixed|blocked","acceptedFindingIds":[],"rejectedFindingIds":[],"unresolvedFindingIds":[],"summary":"short factual summary"}
 

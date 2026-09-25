@@ -41,3 +41,10 @@ without identifying a concrete conflicting or unsupported fragment.
 
 Apply the reviewer focus from the task without relaxing these rules. A pass means the master is
 fully supported by the available OCR text. It does not mean the scans themselves were verified.
+
+When task.reviewMode is `targeted`, read the decision memory and changed findings named in the
+task. Verify that each accepted correction was applied and inspect only its clause, directly
+related references, and possible regressions. Do not restart a full-contract audit. Do not reopen
+a rejected or human-required issue unless you cite new OCR evidence that was absent from the
+recorded decision. A wording preference, register bookkeeping issue, or already recorded human
+question is not a new finding.

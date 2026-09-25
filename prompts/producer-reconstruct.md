@@ -76,6 +76,10 @@ Required work:
    Use corrected lexical terms from the OCR correction register (for example, `Банк` and `СБП`)
    in the operative master text. Do not reproduce a known raw OCR artifact such as `Bask`, `CBI`,
    or `CBII` when the register contains its validated correction.
+   Transcribe the base contract completely before applying included amendments. Apply an amendment
+   as an exact clause replacement or deletion at the clause it names. Do not summarize appendices,
+   forms, footnotes, signature blocks, empty-field labels, or repeated text, and do not paraphrase
+   surviving base-contract wording. This master is an assembled text, not an explanatory report.
 10. Parse `artifacts/reconstruction-scope.json` with a JSON parser and verify its
    required objects and arrays before returning the final status.
 11. Do not inspect or modify the candidate OOXML package during this phase.

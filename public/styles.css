@@ -249,6 +249,8 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .approver-field span { color: var(--muted); font-size: 9px; font-weight: 750; }
 .approver-field input { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 11px; background: white; color: var(--ink); }
 .approver-field input:disabled { background: var(--soft); color: var(--muted); }
+.approval-checkbox { display: flex; flex: 1 1 100%; align-items: flex-start; gap: 9px; padding: 11px 12px; border: 1px solid #d6a64b; border-radius: 11px; background: #fff9ea; color: var(--ink); font-size: 12px; line-height: 1.45; }
+.approval-checkbox input { margin-top: 2px; }
 .approval-notice { margin: 12px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .model-boundary { margin: 6px 0 0; color: var(--amber); font-size: 9px; line-height: 1.5; }
 .error-banner { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: 520px; padding: 14px 18px; border: 1px solid #e8b7b1; border-radius: 12px; background: #fff1ef; box-shadow: var(--shadow); color: var(--danger); font-size: 12px; line-height: 1.5; }

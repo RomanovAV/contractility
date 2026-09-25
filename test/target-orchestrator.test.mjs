@@ -25,11 +25,16 @@ import {
 import {
   approveRun,
   approveMasterRun,
+  applyMasterReviewMemory,
+  createMasterReviewMemory,
+  masterActionItems,
   readRunMaster,
+  reviseMasterRun,
   createAndRun,
   finalizeRun,
   parseProducerStatus,
   reconcileBlockedCandidate,
+  validateMasterChangeSet,
   verifyRun,
 } from "../src/target/runner.mjs";
 import {
@@ -61,6 +66,123 @@ async function exists(filePath) {
     return false;
   }
 }
+
+function masterTestFinding(overrides = {}) {
+  return {
+    id: "finding-test-0001",
+    severity: "major",
+    category: "legal-delta",
+    target: "Пункт 2.1 мастер-договора",
+    sourceDocumentId: "document-1",
+    page: 1,
+    clause: "2.1",
+    evidence: "Ставка составляет 2%.",
+    observed: "В мастер-договоре указана ставка 9%.",
+    impact: "В мастер перенесена неверная ставка.",
+    proposedAction: "Исправить ставку на 2%.",
+    confidence: 0.9,
+    ...overrides,
+  };
+}
+
+test("master review memory keeps a repeated locator when its evidence is new", () => {
+  const original = masterTestFinding();
+  const memory = createMasterReviewMemory([{
+    round: 1,
+    reports: [{ findings: [original] }],
+    consensus: {
+      acceptedFindingIds: [],
+      rejectedFindingIds: [original.id],
+      unresolvedFindingIds: [],
+    },
+  }]);
+  const repeated = applyMasterReviewMemory({
+    verdict: "changes-required",
+    findings: [{ ...original, id: "finding-test-0002" }],
+  }, memory);
+  assert.equal(repeated.verdict, "pass");
+  assert.equal(repeated.suppressedFindingCount, 1);
+
+  const withNewEvidence = applyMasterReviewMemory({
+    verdict: "changes-required",
+    findings: [{
+      ...original,
+      id: "finding-test-0003",
+      evidence: "Дополнительное соглашение устанавливает ставку 3%.",
+    }],
+  }, memory);
+  assert.equal(withNewEvidence.verdict, "changes-required");
+  assert.equal(withNewEvidence.findings.length, 1);
+});
+
+test("master action grouping preserves the most serious severity", () => {
+  const major = masterTestFinding({ confidence: 0.8 });
+  const minor = masterTestFinding({
+    id: "finding-test-0002",
+    severity: "minor",
+    confidence: 0.99,
+  });
+  const actionItems = masterActionItems([{
+    round: 1,
+    reports: [{ findings: [major, minor] }],
+    consensus: {
+      acceptedFindingIds: [],
+      rejectedFindingIds: [],
+      unresolvedFindingIds: [major.id, minor.id],
+    },
+  }]);
+  assert.equal(actionItems.blocking, 1);
+  assert.equal(actionItems.advisory, 0);
+  assert.equal(actionItems.items[0].severity, "major");
+});
+
+test("master change set supports metadata-only fixes and rejects whole-contract replacement", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-change-set-"));
+  const changeSetPath = path.join(temporary, "master-change-set.json");
+  const originalContract = "Исходный договор с условиями. ".repeat(150);
+  await writeFile(changeSetPath, JSON.stringify({
+    schemaVersion: "contractility.master-change-set.v1",
+    scopeChanged: true,
+    ocrCorrectionsChanged: false,
+    metadataFindingIds: ["scope-finding"],
+    operations: [],
+  }));
+  const metadataOnly = await validateMasterChangeSet({
+    changeSetPath,
+    originalContract,
+    correctedContract: originalContract,
+    acceptedFindingIds: ["scope-finding"],
+    scopeChanged: true,
+    scopeChangeAllowed: true,
+    ocrCorrectionsChanged: false,
+    ocrCorrectionsChangeAllowed: false,
+    metadataChangeFindingIds: ["scope-finding"],
+  });
+  assert.equal(metadataOnly.requiresFullReview, true);
+
+  await writeFile(changeSetPath, JSON.stringify({
+    schemaVersion: "contractility.master-change-set.v1",
+    scopeChanged: false,
+    ocrCorrectionsChanged: false,
+    metadataFindingIds: [],
+    operations: [{
+      findingIds: ["text-finding"],
+      before: originalContract,
+      after: "Полностью переписанный договор. ".repeat(150),
+      reason: "Тест полной замены.",
+    }],
+  }));
+  await assert.rejects(validateMasterChangeSet({
+    changeSetPath,
+    originalContract,
+    correctedContract: "Полностью переписанный договор. ".repeat(150),
+    acceptedFindingIds: ["text-finding"],
+    scopeChanged: false,
+    scopeChangeAllowed: false,
+    ocrCorrectionsChanged: false,
+    ocrCorrectionsChangeAllowed: false,
+  }), /слишком большую часть/);
+});
 
 async function waitFor(check, timeoutMs = 5000) {
   const started = Date.now();
@@ -1766,7 +1888,7 @@ test("master review records suspected OCR errors without rewriting the reconstru
     const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
     assert.equal(result.state.status, "awaiting-master-approval");
     assert.equal(result.state.masterReviewFindingCount, 1);
-    const master = await readRunMaster(result.runDirectory);
+    let master = await readRunMaster(result.runDirectory);
     assert.match(master.payload.currentContract, /Проверяемая тестовая редакция договора/);
     const findings = master.payload.review.reports.flatMap((report) => report.findings);
     assert.equal(findings.length, 1);
@@ -1785,7 +1907,7 @@ test("master review records suspected OCR errors without rewriting the reconstru
   }
 });
 
-test("master review fixes a confirmed OCR-supported defect and reruns every reviewer", async () => {
+test("master review reruns a full audit after a substantial accepted correction", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-fix-review-"));
   const legacy = await prepareSimpleCase(temporary);
   const request = JSON.parse(await readFile(
@@ -1804,7 +1926,7 @@ test("master review fixes a confirmed OCR-supported defect and reruns every revi
     },
     outputRoot: path.join(temporary, "master-cases"),
   });
-  process.env.FAKE_GIGACODE_MODE = "master-review-fix-once";
+  process.env.FAKE_GIGACODE_MODE = "master-review-fix-once-master-large-change";
   try {
     const config = targetConfig(path.join(temporary, "runs"), {
       passEnvironment: ["FAKE_GIGACODE_MODE"],
@@ -1825,6 +1947,168 @@ test("master review fixes a confirmed OCR-supported defect and reruns every revi
       await exists(path.join(result.runDirectory, "rounds/02/artifacts/current-contract.md")),
       true,
     );
+    const verificationTask = JSON.parse(await readFile(
+      path.join(result.runDirectory, "rounds/02/master-review-task-legal-a.json"), "utf8",
+    ));
+    assert.equal(verificationTask.reviewMode, "full");
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("master review stops after one targeted cycle and preserves remaining decisions", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-limited-review-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(
+    path.join(legacy.caseDirectory, "formation-request.json"), "utf8",
+  ));
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({
+    requestPath,
+    sources: {
+      "document-1": path.join(temporary, "contract.pdf"),
+      "document-2": path.join(temporary, "amendment.pdf"),
+    },
+    outputRoot: path.join(temporary, "master-cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "master-review-fix-always";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    config.review.masterMaxFixRounds = 1;
+    config.review.masterReviewerCount = 3;
+    const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(result.state.status, "awaiting-master-approval");
+    assert.equal(result.state.round, 2);
+    assert.equal(result.state.masterReviewCompletion, "manual-resolution-required");
+    assert.equal(result.state.masterReviewBlockingCount, 1);
+    let master = await readRunMaster(result.runDirectory);
+    assert.equal(master.payload.review.history.length, 2);
+    assert.equal(master.payload.review.actionItems[0].resolution, "automatic-limit");
+    assert.equal(master.payload.review.actionItems[0].priority, "blocking");
+    const targetedTask = JSON.parse(await readFile(
+      path.join(result.runDirectory, "rounds/02/master-review-task-legal-a.json"), "utf8",
+    ));
+    assert.equal(targetedTask.reviewMode, "targeted");
+    const memory = JSON.parse(await readFile(
+      path.join(result.runDirectory, "rounds/02/master-review-memory.json"), "utf8",
+    ));
+    assert.equal(memory.decisions[0].classification, "fixed");
+    master = await reviseMasterRun({
+      runDirectory: result.runDirectory,
+      currentContract: `${master.payload.currentContract}\n\nРучное уточнение по оригиналу.\n`,
+      sourceFileName: "master-contract-corrected.txt",
+      masterSha256: master.sha256,
+    });
+    assert.equal(master.payload.humanRevisions.length, 1);
+    assert.match(master.payload.currentContract, /Ручное уточнение по оригиналу/);
+    assert.equal((await readRunMaster(result.runDirectory)).sha256, master.sha256);
+    await assert.rejects(
+      approveMasterRun({
+        runDirectory: result.runDirectory,
+        approver: "Тест",
+        masterSha256: master.sha256,
+      }),
+      /Подтвердите.*блокирующие/i,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [
+      "src/cli.mjs",
+      "approve-master",
+      "--run", result.runDirectory,
+      "--approver", "Тест",
+      "--master-sha256", master.sha256,
+      "--acknowledge-findings",
+    ], { cwd: path.resolve(".") });
+    const approved = JSON.parse(stdout);
+    assert.equal(approved.approval.acknowledgedFindings, true);
+    const events = (await readFile(path.join(result.runDirectory, "events.ndjson"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(events.filter((event) => event.event === "gigacode.started"
+      && event.session.startsWith("master-review:")).length, 6);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("minor master findings are advisory and do not start an automatic fix cycle", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-advisory-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(
+    path.join(legacy.caseDirectory, "formation-request.json"), "utf8",
+  ));
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({
+    requestPath,
+    sources: {
+      "document-1": path.join(temporary, "contract.pdf"),
+      "document-2": path.join(temporary, "amendment.pdf"),
+    },
+    outputRoot: path.join(temporary, "master-cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "master-review-minor-always";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(result.state.status, "awaiting-master-approval");
+    assert.equal(result.state.round, 1);
+    assert.equal(result.state.masterReviewBlockingCount, 0);
+    assert.equal(result.state.masterReviewAdvisoryCount, 1);
+    const master = await readRunMaster(result.runDirectory);
+    assert.equal(master.payload.review.actionItems[0].priority, "advisory");
+    const approved = await approveMasterRun({
+      runDirectory: result.runDirectory,
+      approver: "Тест",
+      masterSha256: master.sha256,
+    });
+    assert.equal(approved.approval.acknowledgedFindings, false);
+    const events = (await readFile(path.join(result.runDirectory, "events.ndjson"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(events.some((event) => event.event === "gigacode.started"
+      && event.session.startsWith("master-fix:")), false);
+  } finally {
+    delete process.env.FAKE_GIGACODE_MODE;
+  }
+});
+
+test("master fix rejects edits outside the declared exact replacements", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-undeclared-"));
+  const legacy = await prepareSimpleCase(temporary);
+  const request = JSON.parse(await readFile(
+    path.join(legacy.caseDirectory, "formation-request.json"), "utf8",
+  ));
+  delete request.inputs.newAgreementEdition;
+  request.workflowStage = "master";
+  const requestPath = path.join(temporary, "master-request.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const prepared = await prepareCase({
+    requestPath,
+    sources: {
+      "document-1": path.join(temporary, "contract.pdf"),
+      "document-2": path.join(temporary, "amendment.pdf"),
+    },
+    outputRoot: path.join(temporary, "master-cases"),
+  });
+  process.env.FAKE_GIGACODE_MODE = "master-review-fix-once-master-undeclared-change";
+  try {
+    const config = targetConfig(path.join(temporary, "runs"), {
+      passEnvironment: ["FAKE_GIGACODE_MODE"],
+    });
+    config.review.artifactRetries = 1;
+    const result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+    assert.equal(result.state.status, "awaiting-master-approval");
+    assert.match(result.state.masterReviewRecoveryReason, /не объявленные в точечном наборе/);
+    const master = await readRunMaster(result.runDirectory);
+    assert.doesNotMatch(master.payload.currentContract, /Необъявленное переписывание/);
+    assert.equal(master.payload.review.blockingActionItemCount, 1);
   } finally {
     delete process.env.FAKE_GIGACODE_MODE;
   }
@@ -1868,13 +2152,21 @@ for (const scenario of ["recovered", "always-invalid", "mutate-evidence"]) {
         ));
         assert.equal(task.targetSha256, undefined);
         assert.ok(master.payload.review.targetSha256);
+      } else if (scenario === "always-invalid") {
+        result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+        assert.equal(result.state.status, "awaiting-master-approval");
+        assert.match(
+          result.state.masterReviewRecoveryReason,
+          /после 2 попыток[\s\S]*локальной лексической коррекции/,
+        );
+        const master = await readRunMaster(result.runDirectory);
+        assert.deepEqual(master.payload.ocrCorrections.corrections, []);
+        assert.equal(master.payload.review.blockingActionItemCount, 1);
       } else {
         await assert.rejects(createAndRun({ caseDirectory: prepared.caseDirectory, config }), (error) => {
           result = error;
           assert.equal(error.state.status, "failed");
-          assert.match(error.message, scenario === "always-invalid"
-            ? /после 2 попыток[\s\S]*локальной лексической коррекции/
-            : /manifest|манифест/i);
+          assert.match(error.message, /manifest|манифест/i);
           return true;
         });
         assert.equal(await exists(path.join(result.runDirectory, "master-contract.json")), false);

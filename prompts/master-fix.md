@@ -29,3 +29,16 @@ Do not modify evidence, task files, run inputs, or any unrelated file. Parse and
 reconstruction scope after editing. Return exactly `{"status":"master-corrected"}` when every
 accepted correction is present. Return `{"status":"blocked","reason":"short technical reason"}`
 only if a technical inability prevents the edits. Do not return Markdown or additional prose.
+
+Write `master-change-set.json` through a JSON serializer with this shape:
+`{"schemaVersion":"contractility.master-change-set.v1","scopeChanged":false,"ocrCorrectionsChanged":false,"metadataFindingIds":[],"operations":[{"findingIds":["finding-id"],"before":"exact text occurring once","after":"replacement text","reason":"short factual reason"}]}`.
+Every accepted finding must be covered by an operation or by `metadataFindingIds`. Include a
+finding in `metadataFindingIds` whenever it authorizes a change to reconstruction-scope.json or
+ocr-corrections.json. The same finding may also appear in an operation when it requires both a
+metadata change and a text correction; when it changes metadata only, operations may be empty.
+Each text operation must be an exact,
+local replacement against the contract as it existed at the start of this task. Do not rewrite,
+reformat, reorder, summarize, or regenerate unaffected text. The orchestrator will reconstruct the
+expected result from these operations and reject any undeclared edit. Set scopeChanged=true only
+when an accepted contract-reconstruction or legal-delta finding requires a scope correction. Set
+ocrCorrectionsChanged=true only for an accepted ocr-normalization finding.

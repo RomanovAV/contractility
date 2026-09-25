@@ -358,14 +358,18 @@ if (model === "missing-model") {
       }],
     });
   } else if (
-    mode.includes("master-review-fix-once")
+    (mode.includes("master-review-fix-once")
+      || mode.includes("master-review-fix-always")
+      || mode.includes("master-review-minor-always"))
     && model === "review-model-a"
-    && !currentContract.includes("Исправлено по подтверждённому замечанию")
+    && (mode.includes("master-review-fix-always")
+      || mode.includes("master-review-minor-always")
+      || !currentContract.includes("Исправлено по подтверждённому замечанию"))
   ) {
     emit({
       verdict: "changes-required",
       findings: [{
-        severity: "major",
+        severity: mode.includes("master-review-minor-always") ? "minor" : "major",
         category: mode.includes("master-invalid-ocr") ? "ocr-normalization" : "contract-reconstruction",
         target: "Пункт 1 мастер-договора",
         sourceDocumentId: "document-2",
@@ -411,7 +415,43 @@ if (model === "missing-model") {
   const task = JSON.parse(await readFile(path.join(process.cwd(), taskName), "utf8"));
   const currentPath = path.join(process.cwd(), task.paths.currentContract);
   const current = await readFile(currentPath, "utf8");
-  await writeFile(currentPath, `${current.trim()}\n\nИсправлено по подтверждённому замечанию.\n`);
+  const correction = "Исправлено по подтверждённому замечанию.";
+  const baselinePath = path.join(process.cwd(), "fake-master-fix-baseline.txt");
+  let original;
+  try {
+    original = await readFile(baselinePath, "utf8");
+  } catch {
+    original = current;
+    await writeFile(baselinePath, original);
+  }
+  let suffixLength = 1;
+  while (suffixLength < original.length) {
+    const suffix = original.slice(-suffixLength);
+    if (original.indexOf(suffix) === original.length - suffixLength) break;
+    suffixLength += 1;
+  }
+  const before = original.slice(-suffixLength);
+  const after = `${before.trimEnd()}\n\n${correction}\n`
+    + (mode.includes("master-large-change") ? `${"Расширенная проверяемая правка. ".repeat(90)}\n` : "");
+  const corrected = `${original.slice(0, -suffixLength)}${after}`;
+  await writeFile(
+    currentPath,
+    mode.includes("master-undeclared-change")
+      ? `${corrected}\nНеобъявленное переписывание мастер-договора.\n`
+      : corrected,
+  );
+  await writeFile(path.join(process.cwd(), task.paths.changeSet), JSON.stringify({
+    schemaVersion: "contractility.master-change-set.v1",
+    scopeChanged: false,
+    ocrCorrectionsChanged: mode.includes("master-invalid-ocr"),
+    metadataFindingIds: mode.includes("master-invalid-ocr") ? task.acceptedFindingIds : [],
+    operations: [{
+      findingIds: task.acceptedFindingIds,
+      before,
+      after,
+      reason: "Точечное тестовое исправление принятого замечания.",
+    }],
+  }));
   if (mode.includes("master-invalid-ocr")) {
     const invalid = !prompt.includes("Repair invalid master artifacts") || mode.includes("always-invalid");
     await writeFile(path.join(process.cwd(), task.paths.ocrCorrections), JSON.stringify({

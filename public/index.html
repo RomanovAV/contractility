@@ -150,6 +150,8 @@
           <input id="master-file-input" type="file" accept="application/json,.json,.master-contract.json" hidden>
           <button id="download-master" class="secondary-button" type="button" disabled>Скачать файл проекта</button>
           <button id="download-master-text" class="secondary-button" type="button" disabled>Скачать текст</button>
+          <button id="load-master-revision" class="secondary-button" type="button" hidden disabled>Загрузить исправленный текст</button>
+          <input id="master-revision-file-input" type="file" accept="text/plain,.txt,.md" hidden>
         </div>
         <div id="master-details" hidden>
           <label for="master-text">Текст мастер-договора для проверки</label>
@@ -162,9 +164,10 @@
           </details>
           <div id="master-approval" class="master-actions">
             <label class="approver-field"><span>Мастер-договор проверил(а)</span><input id="master-approver" type="text" autocomplete="name" placeholder="ФИО проверяющего"></label>
+            <label id="master-risk-acknowledgement" class="approval-checkbox" hidden><input id="master-risk-checkbox" type="checkbox"> <span>Я проверил(а) блокирующие замечания по оригиналам и принимаю решение использовать эту редакцию</span></label>
             <button id="approve-master" class="primary-button" type="button" disabled>Подтвердить мастер-договор</button>
           </div>
-          <p class="approval-notice">Модели сверяют мастер только с OCR-текстом и не видят изображения страниц. Перед подтверждением проверьте отмеченные страницы по оригиналу, текст, применённые и исключённые соглашения и незаполненные поля. Отметка проверки сохраняется с файлом проекта и не является электронной подписью.</p>
+          <p class="approval-notice">Модели сверяют мастер только с OCR-текстом и не видят изображения страниц. Блокирующие замечания требуют решения человека; информационные сохраняются для аудита и не останавливают переход к ДС. Перед подтверждением проверьте отмеченные страницы по оригиналу. Отметка проверки сохраняется с файлом проекта и не является электронной подписью.</p>
         </div>
       </section>
 

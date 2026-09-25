@@ -59,6 +59,7 @@ import {
 
 import {
   createMasterContract,
+  masterPayloadHash,
   masterReviewTargetHash,
   validateMasterContract,
 } from "../../public/master-contract.mjs";
@@ -1129,11 +1130,15 @@ async function runMasterReviewer({
   evidenceManifestSha256,
   onGigacodeEvent,
   signedDocuments,
+  reviewMode,
+  memoryPath,
+  changedFindingsPath,
 }) {
   const task = {
     schemaVersion: "contractility.master-review-task.v1",
     round,
     reviewTarget: "master-contract",
+    reviewMode,
     reviewer: {
       id: reviewer.id,
       model: reviewer.model,
@@ -1153,6 +1158,8 @@ async function runMasterReviewer({
       ocrCorrections: "artifacts/ocr-corrections.json",
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
+      decisionMemory: path.basename(memoryPath),
+      ...(changedFindingsPath ? { changedFindings: path.basename(changedFindingsPath) } : {}),
     },
   };
   const taskPath = path.join(roundDirectory, `master-review-task-${reviewer.id}.json`);
@@ -1160,7 +1167,7 @@ async function runMasterReviewer({
   const runReadOnly = async (options) => {
     const sandbox = await createMasterReviewSandbox({
       roundDirectory,
-      taskPaths: [taskPath],
+      taskPaths: [taskPath, memoryPath, ...(changedFindingsPath ? [changedFindingsPath] : [])],
       reviewerId: reviewer.id,
       evidenceManifestSha256,
       targetSha256,
@@ -1267,10 +1274,8 @@ function masterFindingMap(reports) {
   return findings;
 }
 
-function masterActionItems(reports, findingIds) {
-  const findings = masterFindingMap(reports);
-  const severityRank = { blocker: 0, major: 1, minor: 2 };
-  const normalizedKey = (finding) => [
+function masterFindingKey(finding) {
+  return [
     finding.sourceDocumentId,
     finding.page ?? "none",
     finding.category,
@@ -1281,26 +1286,104 @@ function masterActionItems(reports, findingIds) {
       .trim()
       .slice(0, 160),
   ].join("|");
-  const grouped = new Map();
-  for (const id of findingIds) {
-    const finding = findings.get(id);
-    if (!finding) continue;
-    const key = normalizedKey(finding);
-    const previous = grouped.get(key);
-    if (!previous) {
-      grouped.set(key, { ...finding, relatedFindingIds: [id] });
-      continue;
+}
+
+function masterFindingEvidenceKey(finding) {
+  return [finding.evidence, finding.observed]
+    .map((value) => String(value ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim())
+    .join("|");
+}
+
+export function createMasterReviewMemory(reviewHistory) {
+  const decisions = new Map();
+  for (const entry of reviewHistory) {
+    const findings = masterFindingMap(entry.reports);
+    for (const [classification, ids] of [
+      ["fixed", entry.consensus.acceptedFindingIds],
+      ["rejected", entry.consensus.rejectedFindingIds],
+      ["human-required", entry.consensus.unresolvedFindingIds],
+    ]) {
+      for (const id of ids) {
+        const finding = findings.get(id);
+        if (!finding) continue;
+        decisions.set(masterFindingKey(finding), {
+          key: masterFindingKey(finding),
+          classification,
+          round: entry.round,
+          finding,
+        });
+      }
     }
-    previous.relatedFindingIds.push(id);
-    if ((severityRank[finding.severity] ?? 9) < (severityRank[previous.severity] ?? 9)
-      || finding.confidence > previous.confidence) {
-      grouped.set(key, {
+  }
+  return {
+    schemaVersion: "contractility.master-review-memory.v1",
+    decisions: [...decisions.values()],
+  };
+}
+
+export function applyMasterReviewMemory(report, memory) {
+  const settled = new Map(memory.decisions.map((decision) => [decision.key, decision]));
+  const findings = report.findings.filter((finding) => {
+    const previous = settled.get(masterFindingKey(finding));
+    if (!previous || previous.classification === "fixed") return true;
+    return masterFindingEvidenceKey(previous.finding) !== masterFindingEvidenceKey(finding);
+  });
+  return {
+    ...report,
+    verdict: findings.length > 0 ? "changes-required" : "pass",
+    findings,
+    suppressedFindingCount: report.findings.length - findings.length,
+  };
+}
+
+function masterFindingPriority(finding) {
+  if (finding.severity === "blocker" || finding.severity === "major") return "blocking";
+  if (["ocr-quality", "missing-evidence", "security"].includes(finding.category)) {
+    return "blocking";
+  }
+  return "advisory";
+}
+
+export function masterActionItems(reviewHistory) {
+  const severityRank = { blocker: 0, major: 1, minor: 2 };
+  const grouped = new Map();
+  for (const [historyIndex, entry] of reviewHistory.entries()) {
+    const findings = masterFindingMap(entry.reports);
+    const decisions = [
+      ...entry.consensus.unresolvedFindingIds.map((id) => [id, "human-required"]),
+      ...(historyIndex === reviewHistory.length - 1
+        ? entry.consensus.acceptedFindingIds.map((id) => [id, "automatic-limit"])
+        : []),
+    ];
+    for (const [id, resolution] of decisions) {
+      const finding = findings.get(id);
+      if (!finding) continue;
+      const key = masterFindingKey(finding);
+      const previous = grouped.get(key);
+      const next = {
         ...finding,
-        relatedFindingIds: previous.relatedFindingIds,
-      });
+        resolution,
+        priority: masterFindingPriority(finding),
+        relatedFindingIds: [...new Set([...(previous?.relatedFindingIds ?? []), id])],
+      };
+      const nextSeverity = severityRank[finding.severity] ?? 9;
+      const previousSeverity = severityRank[previous?.severity] ?? 9;
+      if (!previous
+        || nextSeverity < previousSeverity
+        || (nextSeverity === previousSeverity && finding.confidence > previous.confidence)) {
+        grouped.set(key, next);
+      } else {
+        previous.relatedFindingIds = next.relatedFindingIds;
+      }
     }
   }
   const all = [...grouped.values()].sort((left, right) =>
+    (left.priority === "blocking" ? 0 : 1) - (right.priority === "blocking" ? 0 : 1)
+      ||
     (severityRank[left.severity] ?? 9) - (severityRank[right.severity] ?? 9)
       || right.confidence - left.confidence
       || left.sourceDocumentId.localeCompare(right.sourceDocumentId)
@@ -1308,7 +1391,106 @@ function masterActionItems(reports, findingIds) {
   return {
     items: all.slice(0, 10),
     total: all.length,
+    blocking: all.filter((finding) => finding.priority === "blocking").length,
+    advisory: all.filter((finding) => finding.priority === "advisory").length,
     omitted: Math.max(0, all.length - 10),
+  };
+}
+
+function selectMasterReviewers(reviewers, count) {
+  const priorities = ["contract-reconstruction", "document-fidelity", "legal-delta"];
+  return [...reviewers]
+    .sort((left, right) => {
+      const leftRank = priorities.indexOf(left.id);
+      const rightRank = priorities.indexOf(right.id);
+      return (leftRank < 0 ? priorities.length : leftRank)
+        - (rightRank < 0 ? priorities.length : rightRank);
+    })
+    .slice(0, Math.max(3, Math.min(count, reviewers.length)));
+}
+
+export async function validateMasterChangeSet({
+  changeSetPath,
+  originalContract,
+  correctedContract,
+  acceptedFindingIds,
+  scopeChanged,
+  scopeChangeAllowed,
+  ocrCorrectionsChanged,
+  ocrCorrectionsChangeAllowed,
+  metadataChangeFindingIds = [],
+}) {
+  const changeSet = await readJson(changeSetPath);
+  const metadataFindingIds = Array.isArray(changeSet?.metadataFindingIds)
+    ? changeSet.metadataFindingIds
+    : [];
+  if (changeSet?.schemaVersion !== "contractility.master-change-set.v1"
+    || !Array.isArray(changeSet.operations)
+    || changeSet.operations.length > Math.max(acceptedFindingIds.length * 3, 3)
+    || metadataFindingIds.some((id) => typeof id !== "string")
+    || changeSet.operations.length + metadataFindingIds.length < 1) {
+    throw new TypeError("Некорректный набор точечных изменений мастер-договора.");
+  }
+  const accepted = new Set(acceptedFindingIds);
+  const metadataAllowed = new Set(metadataChangeFindingIds);
+  const covered = new Set();
+  let expected = originalContract;
+  let touchedCharacters = 0;
+  let replacedCharacters = 0;
+  for (const [index, operation] of changeSet.operations.entries()) {
+    if (!Array.isArray(operation?.findingIds) || operation.findingIds.length < 1
+      || operation.findingIds.some((id) => !accepted.has(id))) {
+      throw new TypeError(`master-change-set.operations[${index}] содержит неизвестное замечание.`);
+    }
+    if (typeof operation.before !== "string" || !operation.before
+      || typeof operation.after !== "string" || operation.before === operation.after
+      || typeof operation.reason !== "string" || !operation.reason.trim()) {
+      throw new TypeError(`master-change-set.operations[${index}] описывает некорректную замену.`);
+    }
+    const first = expected.indexOf(operation.before);
+    if (first < 0 || expected.indexOf(operation.before, first + 1) >= 0) {
+      throw new TypeError(
+        `master-change-set.operations[${index}].before должен встречаться в мастере ровно один раз.`,
+      );
+    }
+    touchedCharacters += operation.before.length + operation.after.length;
+    replacedCharacters += operation.before.length;
+    expected = `${expected.slice(0, first)}${operation.after}${expected.slice(first + operation.before.length)}`;
+    for (const id of operation.findingIds) covered.add(id);
+  }
+  for (const id of metadataFindingIds) {
+    if (!accepted.has(id) || !metadataAllowed.has(id)) {
+      throw new TypeError("master-change-set.metadataFindingIds содержит неизвестное замечание.");
+    }
+    covered.add(id);
+  }
+  if (acceptedFindingIds.some((id) => !covered.has(id))) {
+    throw new TypeError("Набор точечных изменений покрывает не все принятые замечания.");
+  }
+  if (Boolean(changeSet.scopeChanged) !== scopeChanged || (scopeChanged && !scopeChangeAllowed)) {
+    throw new TypeError("Изменение reconstruction scope не подтверждено точечным набором замечаний.");
+  }
+  if (Boolean(changeSet.ocrCorrectionsChanged) !== ocrCorrectionsChanged
+    || (ocrCorrectionsChanged && !ocrCorrectionsChangeAllowed)) {
+    throw new TypeError("Изменение реестра OCR не подтверждено точечным набором замечаний.");
+  }
+  if ((metadataFindingIds.length > 0) !== (scopeChanged || ocrCorrectionsChanged)) {
+    throw new TypeError("metadataFindingIds не соответствует изменениям метаданных мастера.");
+  }
+  const replacementLimit = Math.max(2_000, Math.floor(originalContract.length * 0.35));
+  const touchedLimit = Math.max(8_000, Math.floor(originalContract.length * 0.35));
+  if (replacedCharacters > replacementLimit
+    || replacedCharacters >= originalContract.length * 0.8
+    || touchedCharacters > touchedLimit) {
+    throw new TypeError("Набор изменений затрагивает слишком большую часть мастер-договора.");
+  }
+  if (expected !== correctedContract) {
+    throw new TypeError("Мастер-договор содержит изменения, не объявленные в точечном наборе.");
+  }
+  return {
+    changeSet,
+    requiresFullReview: scopeChanged
+      || touchedCharacters > Math.max(2_000, Math.floor(originalContract.length * 0.08)),
   };
 }
 
@@ -1322,6 +1504,8 @@ async function runMasterSynthesis({
   evidenceManifestSha256,
   onGigacodeEvent,
   signedDocuments,
+  reviewMode,
+  memoryPath,
 }) {
   const findingMap = masterFindingMap(reports);
   const findingIds = [...findingMap.keys()];
@@ -1336,6 +1520,7 @@ async function runMasterSynthesis({
   await atomicWriteJson(taskPath, {
     schemaVersion: "contractility.master-synthesis-task.v1",
     round,
+    reviewMode,
     findingIds,
     policy: {
       evidenceBoundary: "ocr-text-only-no-page-images",
@@ -1351,6 +1536,7 @@ async function runMasterSynthesis({
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
       untrustedFindings: path.basename(findingsPath),
+      decisionMemory: path.basename(memoryPath),
     },
   });
   const prompt = `${(await loadPrompt("master-synthesis.md")).trim()}
@@ -1360,7 +1546,7 @@ Untrusted findings: ${path.basename(findingsPath)}`;
   const runReadOnly = async (options) => {
     const sandbox = await createMasterReviewSandbox({
       roundDirectory,
-      taskPaths: [taskPath, findingsPath],
+      taskPaths: [taskPath, findingsPath, memoryPath],
       reviewerId: `synthesis-${round}`,
       evidenceManifestSha256,
       targetSha256,
@@ -1488,6 +1674,14 @@ async function runMasterFix({
   const acceptedFindings = consensus.acceptedFindingIds.map((id) => findingMap.get(id));
   const findingsPath = path.join(roundDirectory, "master-accepted-findings.json");
   const taskPath = path.join(roundDirectory, "master-fix-task.json");
+  const changeSetPath = path.join(roundDirectory, "master-change-set.json");
+  const originalContract = await readFile(
+    path.join(roundDirectory, "artifacts/current-contract.md"),
+    "utf8",
+  );
+  const originalScope = await readJson(
+    path.join(roundDirectory, "artifacts/reconstruction-scope.json"),
+  );
   await atomicWriteJson(findingsPath, {
     schemaVersion: "contractility.master-accepted-findings.v1",
     round,
@@ -1511,6 +1705,7 @@ async function runMasterFix({
       currentContract: "artifacts/current-contract.md",
       reconstructionScope: "artifacts/reconstruction-scope.json",
       acceptedFindings: path.basename(findingsPath),
+      changeSet: path.basename(changeSetPath),
     },
   });
   const basePrompt = `${(await loadPrompt("master-fix.md")).trim()}\n\nMaster fix task: ${path.basename(taskPath)}`;
@@ -1550,8 +1745,37 @@ async function runMasterFix({
       );
     },
     validateArtifacts: async () => {
+      const correctedOcrCorrectionsSha256 = await sha256File(ocrCorrectionsPath);
+      const correctedScope = await readJson(
+        path.join(roundDirectory, "artifacts/reconstruction-scope.json"),
+      );
+      const scopeChanged = JSON.stringify(originalScope) !== JSON.stringify(correctedScope);
+      const ocrCorrectionsChanged = correctedOcrCorrectionsSha256
+        !== originalOcrCorrectionsSha256;
+      const metadataCategories = new Set([
+        ...(scopeChanged ? ["contract-reconstruction", "legal-delta"] : []),
+        ...(ocrCorrectionsChanged ? ["ocr-normalization"] : []),
+      ]);
+      const changeValidation = await validateMasterChangeSet({
+        changeSetPath,
+        originalContract,
+        correctedContract: await readFile(
+          path.join(roundDirectory, "artifacts/current-contract.md"),
+          "utf8",
+        ),
+        acceptedFindingIds: consensus.acceptedFindingIds,
+        scopeChanged,
+        scopeChangeAllowed: acceptedFindings.some((finding) =>
+          ["contract-reconstruction", "legal-delta"].includes(finding?.category)),
+        ocrCorrectionsChanged,
+        ocrCorrectionsChangeAllowed: acceptedFindings.some((finding) =>
+          finding?.category === "ocr-normalization"),
+        metadataChangeFindingIds: acceptedFindings
+          .filter((finding) => metadataCategories.has(finding?.category))
+          .map((finding) => finding.id),
+      });
       await requireOcrCorrections(roundDirectory, signedDocuments);
-      if (await sha256File(ocrCorrectionsPath) !== originalOcrCorrectionsSha256
+      if (correctedOcrCorrectionsSha256 !== originalOcrCorrectionsSha256
         && !acceptedFindings.some((finding) => finding?.category === "ocr-normalization")) {
         throw new Error("Producer изменил реестр OCR без принятого замечания о нормализации.");
       }
@@ -1572,7 +1796,10 @@ async function runMasterFix({
       if (correctedTargetSha256 === targetSha256) {
         throw new Error("Producer не изменил мастер-договор по подтверждённым замечаниям.");
       }
-      return correctedTargetSha256;
+      return {
+        targetSha256: correctedTargetSha256,
+        requiresFullReview: changeValidation.requiresFullReview,
+      };
     },
     onValidationFailure: ({ attempt, error, retriesRemaining }) => appendEvent(
       runDirectory, "artifact.validation-failed", {
@@ -1906,6 +2133,52 @@ async function createNextMasterRound(currentDirectory, nextDirectory) {
   ]);
 }
 
+async function persistMasterForHuman({
+  runDirectory,
+  state,
+  masterPayload,
+  reviewHistory,
+  evidenceManifestSha256,
+}) {
+  const finalReview = reviewHistory.at(-1);
+  const humanReview = masterActionItems(reviewHistory);
+  const findingsSha256 = findingFingerprint(finalReview.reports);
+  masterPayload.review = {
+    schemaVersion: "contractility.master-review.v1",
+    reviewedAt: new Date().toISOString(),
+    round: finalReview.round,
+    targetSha256: finalReview.targetSha256,
+    evidenceManifestSha256,
+    findingsSha256,
+    reports: finalReview.reports,
+    consensus: finalReview.consensus,
+    actionItems: humanReview.items,
+    actionItemCount: humanReview.total,
+    blockingActionItemCount: humanReview.blocking,
+    advisoryActionItemCount: humanReview.advisory,
+    omittedActionItemCount: humanReview.omitted,
+    reviewCompletion: humanReview.blocking > 0
+      ? "manual-resolution-required"
+      : humanReview.advisory > 0 ? "complete-with-advisories" : "automatic-complete",
+    history: reviewHistory,
+  };
+  const master = await createMasterContract(masterPayload);
+  await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
+  const nextState = await writeState(runDirectory, {
+    ...state,
+    status: "awaiting-master-approval",
+    masterSha256: master.sha256,
+    masterPath: "master-contract.json",
+    findingsSha256,
+    masterReviewFindingCount: humanReview.total,
+    masterReviewBlockingCount: humanReview.blocking,
+    masterReviewAdvisoryCount: humanReview.advisory,
+    masterReviewOmittedFindingCount: humanReview.omitted,
+    masterReviewCompletion: masterPayload.review.reviewCompletion,
+  });
+  return { master, state: nextState };
+}
+
 export async function createAndRun({ caseDirectory, config, onRunCreated = null }) {
   const verifiedCase = await verifyCase(caseDirectory);
   const runId = `run-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}-${randomBytes(4).toString("hex")}`;
@@ -2084,12 +2357,35 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
     }
     if (masterOnly) {
       const reviewHistory = [];
-      const finalVerificationRound = config.review.maxRounds + 1;
+      let nextReviewMode = "full";
+      const maxFixRounds = config.review.masterMaxFixRounds ?? 1;
+      const finalVerificationRound = maxFixRounds + 1;
+      const selectedReviewers = selectMasterReviewers(
+        config.models.reviewers,
+        config.review.masterReviewerCount ?? 3,
+      );
       for (let round = 1; round <= finalVerificationRound; round += 1) {
         const roundDirectory = path.join(
           runDirectory,
           `rounds/${String(round).padStart(2, "0")}`,
         );
+        const reviewMode = round === 1 ? "full" : nextReviewMode;
+        const memory = createMasterReviewMemory(reviewHistory);
+        const memoryPath = path.join(roundDirectory, "master-review-memory.json");
+        await atomicWriteJson(memoryPath, memory);
+        let changedFindingsPath = null;
+        if (round > 1) {
+          const previous = reviewHistory.at(-1);
+          const previousFindings = masterFindingMap(previous.reports);
+          changedFindingsPath = path.join(roundDirectory, "master-changed-findings.json");
+          await atomicWriteJson(changedFindingsPath, {
+            schemaVersion: "contractility.master-changed-findings.v1",
+            sourceRound: previous.round,
+            findings: previous.consensus.acceptedFindingIds
+              .map((id) => previousFindings.get(id))
+              .filter(Boolean),
+          });
+        }
         const masterPayload = {
           currentContract: await readFile(
             path.join(roundDirectory, "artifacts/current-contract.md"),
@@ -2108,12 +2404,13 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           ...state,
           status: "reviewing-master",
           round,
+          masterReviewMode: reviewMode,
           masterReviewTargetSha256: targetSha256,
         });
         const reviewDirectory = path.join(roundDirectory, "reviews");
         await ensurePrivateDirectory(reviewDirectory);
         const reviewResults = await mapPool(
-          config.models.reviewers,
+          selectedReviewers,
           config.review.maxParallel,
           async (reviewer) => {
             try {
@@ -2127,12 +2424,16 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
                 evidenceManifestSha256,
                 onGigacodeEvent: gigacodeEvents.record,
                 signedDocuments: formationRequest.inputs.signedDocuments,
+                reviewMode,
+                memoryPath,
+                changedFindingsPath,
               });
+              const rememberedReport = applyMasterReviewMemory(report, memory);
               await atomicWriteJson(
-                path.join(reviewDirectory, `${report.reviewer.id}.json`),
-                report,
+                path.join(reviewDirectory, `${rememberedReport.reviewer.id}.json`),
+                rememberedReport,
               );
-              return { ok: true, reviewer, report };
+              return { ok: true, reviewer, report: rememberedReport };
             } catch (error) {
               return {
                 ok: false,
@@ -2206,7 +2507,28 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
             evidenceManifestSha256,
             onGigacodeEvent: gigacodeEvents.record,
             signedDocuments: formationRequest.inputs.signedDocuments,
+            reviewMode,
+            memoryPath,
           });
+        }
+        const currentFindings = masterFindingMap(reports);
+        const advisoryAcceptedIds = consensus.acceptedFindingIds.filter((id) => {
+          const finding = currentFindings.get(id);
+          return finding && masterFindingPriority(finding) === "advisory";
+        });
+        if (advisoryAcceptedIds.length > 0) {
+          const advisorySet = new Set(advisoryAcceptedIds);
+          consensus = {
+            ...consensus,
+            status: "blocked",
+            acceptedFindingIds: consensus.acceptedFindingIds.filter((id) => !advisorySet.has(id)),
+            unresolvedFindingIds: [
+              ...new Set([...consensus.unresolvedFindingIds, ...advisoryAcceptedIds]),
+            ],
+            summary: `${consensus.summary} ${advisoryAcceptedIds.length} информационн. замеч. `
+              + "переданы человеку без нового автоматического цикла.",
+          };
+          await atomicWriteJson(path.join(roundDirectory, "consensus.json"), consensus);
         }
         reviewHistory.push({
           round,
@@ -2214,35 +2536,82 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           reports,
           consensus,
         });
-        if (consensus.acceptedFindingIds.length > 0) {
-          if (round > config.review.maxRounds) {
-            state = await writeState(runDirectory, {
-              ...state,
-              status: "blocked",
-              blocker: `Мастер-договор не прошёл итоговую проверку после `
-                + `${config.review.maxRounds} раундов исправлений.`,
-              findingsSha256: findingFingerprint(reports),
-            });
-            return { runId, runDirectory, state };
-          }
+        if (consensus.acceptedFindingIds.length > 0 && round <= maxFixRounds) {
           state = await writeState(runDirectory, {
             ...state,
             status: "fixing-master",
             round,
           });
-          await runMasterFix({
-            round,
-            roundDirectory,
-            reports,
-            consensus,
-            targetSha256,
-            config,
-            runDirectory,
-            evidenceManifestSha256,
-            onGigacodeEvent: gigacodeEvents.record,
-            signedDocuments: formationRequest.inputs.signedDocuments,
-            verifyIntegrity: () => verifyImmutableRunInputs(runDirectory, verifiedCase.manifest),
-          });
+          const backupDirectory = await mkdtemp(
+            path.join(os.tmpdir(), "contractility-master-fix-backup-"),
+          );
+          await cp(
+            path.join(roundDirectory, "artifacts"),
+            path.join(backupDirectory, "artifacts"),
+            { recursive: true },
+          );
+          try {
+            const fixResult = await runMasterFix({
+              round,
+              roundDirectory,
+              reports,
+              consensus,
+              targetSha256,
+              config,
+              runDirectory,
+              evidenceManifestSha256,
+              onGigacodeEvent: gigacodeEvents.record,
+              signedDocuments: formationRequest.inputs.signedDocuments,
+              verifyIntegrity: () => verifyImmutableRunInputs(runDirectory, verifiedCase.manifest),
+            });
+            nextReviewMode = fixResult.requiresFullReview ? "full" : "targeted";
+          } catch (error) {
+            await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
+            await verifyEvidenceWorkspace(
+              path.join(roundDirectory, "evidence"),
+              evidenceManifestSha256,
+            );
+            await rm(path.join(roundDirectory, "artifacts"), { recursive: true, force: true });
+            await cp(
+              path.join(backupDirectory, "artifacts"),
+              path.join(roundDirectory, "artifacts"),
+              { recursive: true },
+            );
+            consensus = {
+              ...consensus,
+              status: "blocked",
+              unresolvedFindingIds: [
+                ...new Set([
+                  ...consensus.unresolvedFindingIds,
+                  ...consensus.acceptedFindingIds,
+                ]),
+              ],
+              acceptedFindingIds: [],
+              summary: `${consensus.summary} Автоматическое исправление отклонено `
+                + `валидатором и передано человеку: ${error.message ?? error}`,
+            };
+            reviewHistory.at(-1).consensus = consensus;
+            await atomicWriteJson(path.join(roundDirectory, "consensus.json"), consensus);
+            await appendEvent(runDirectory, "master-fix.deferred-to-human", {
+              round,
+              error: error.message ?? String(error),
+            });
+            state = await writeState(runDirectory, {
+              ...state,
+              masterReviewRecoveryReason: error.message ?? String(error),
+            });
+            const persisted = await persistMasterForHuman({
+              runDirectory,
+              state,
+              masterPayload,
+              reviewHistory,
+              evidenceManifestSha256,
+            });
+            state = persisted.state;
+            return { runId, runDirectory, state };
+          } finally {
+            await rm(backupDirectory, { recursive: true, force: true });
+          }
           await verifyImmutableRunInputs(runDirectory, verifiedCase.manifest);
           await createNextMasterRound(
             roundDirectory,
@@ -2250,36 +2619,14 @@ export async function createAndRun({ caseDirectory, config, onRunCreated = null 
           );
           continue;
         }
-        const humanReview = masterActionItems(
-          reports,
-          consensus.unresolvedFindingIds,
-        );
-        const findingsSha256 = findingFingerprint(reports);
-        masterPayload.review = {
-          schemaVersion: "contractility.master-review.v1",
-          reviewedAt: new Date().toISOString(),
-          round,
-          targetSha256,
+        const persisted = await persistMasterForHuman({
+          runDirectory,
+          state,
+          masterPayload,
+          reviewHistory,
           evidenceManifestSha256,
-          findingsSha256,
-          reports,
-          consensus,
-          actionItems: humanReview.items,
-          actionItemCount: humanReview.total,
-          omittedActionItemCount: humanReview.omitted,
-          history: reviewHistory,
-        };
-        const master = await createMasterContract(masterPayload);
-        await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
-        state = await writeState(runDirectory, {
-          ...state,
-          status: "awaiting-master-approval",
-          masterSha256: master.sha256,
-          masterPath: "master-contract.json",
-          findingsSha256,
-          masterReviewFindingCount: humanReview.total,
-          masterReviewOmittedFindingCount: humanReview.omitted,
         });
+        state = persisted.state;
         return { runId, runDirectory, state };
       }
     }
@@ -2624,7 +2971,12 @@ export async function readRunMaster(runDirectory) {
   return master;
 }
 
-export async function approveMasterRun({ runDirectory, approver, masterSha256 }) {
+export async function approveMasterRun({
+  runDirectory,
+  approver,
+  masterSha256,
+  acknowledgeFindings = false,
+}) {
   const release = await acquireRunLock(runDirectory);
   try {
     const state = await readJson(path.join(runDirectory, "state.json"));
@@ -2632,9 +2984,76 @@ export async function approveMasterRun({ runDirectory, approver, masterSha256 })
     if (typeof approver !== "string" || !approver.trim()) throw new Error("Укажите ФИО проверяющего.");
     const master = await readRunMaster(runDirectory);
     if (masterSha256 !== master.sha256) throw new Error("Хеш мастер-договора изменился.");
-    master.approval = { approver: approver.trim(), approvedAt: new Date().toISOString(), sha256: master.sha256 };
+    if ((master.payload.review?.blockingActionItemCount ?? 0) > 0
+      && acknowledgeFindings !== true) {
+      throw new Error("Подтвердите, что блокирующие замечания проверены и решение принято человеком.");
+    }
+    master.approval = {
+      approver: approver.trim(),
+      approvedAt: new Date().toISOString(),
+      sha256: master.sha256,
+      acknowledgedFindings: acknowledgeFindings === true,
+    };
     await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
     await writeState(runDirectory, { ...state, status: "master-approved", masterApproval: master.approval });
+    return master;
+  } finally {
+    await release();
+  }
+}
+
+export async function reviseMasterRun({
+  runDirectory,
+  currentContract,
+  sourceFileName,
+  masterSha256,
+}) {
+  const release = await acquireRunLock(runDirectory);
+  try {
+    const state = await readJson(path.join(runDirectory, "state.json"));
+    if (state.status !== "awaiting-master-approval") {
+      throw new Error("Мастер-договор не ожидает ручного исправления.");
+    }
+    if (typeof currentContract !== "string" || currentContract.trim().length < 100) {
+      throw new Error("Исправленный текст мастер-договора слишком короткий.");
+    }
+    if (typeof sourceFileName !== "string" || !sourceFileName.trim()) {
+      throw new Error("Не указано имя файла с ручной редакцией.");
+    }
+    const master = await readRunMaster(runDirectory);
+    if (master.sha256 !== masterSha256) throw new Error("Хеш мастер-договора изменился.");
+    if (master.payload.currentContract === currentContract) {
+      throw new Error("Исправленный текст не отличается от текущего мастер-договора.");
+    }
+    const previousTargetSha256 = await masterReviewTargetHash(master.payload);
+    const previousMasterSha256 = master.sha256;
+    master.payload.currentContract = currentContract;
+    const currentTargetSha256 = await masterReviewTargetHash(master.payload);
+    master.payload.humanRevisions = [
+      ...(master.payload.humanRevisions ?? []),
+      {
+        schemaVersion: "contractility.master-human-revision.v1",
+        revisedAt: new Date().toISOString(),
+        sourceFileName: path.basename(sourceFileName.trim()).slice(0, 255),
+        previousTargetSha256,
+        currentTargetSha256,
+        previousMasterSha256,
+      },
+    ];
+    master.sha256 = await masterPayloadHash(master.payload);
+    master.approval = null;
+    await validateMasterContract(master, { requireApproval: false });
+    await atomicWriteJson(path.join(runDirectory, "master-contract.json"), master);
+    await writeState(runDirectory, {
+      ...state,
+      masterSha256: master.sha256,
+      masterHumanRevisionCount: master.payload.humanRevisions.length,
+    });
+    await appendEvent(runDirectory, "master.human-revised", {
+      sourceFileName: path.basename(sourceFileName.trim()).slice(0, 255),
+      previousMasterSha256,
+      masterSha256: master.sha256,
+    });
     return master;
   } finally {
     await release();

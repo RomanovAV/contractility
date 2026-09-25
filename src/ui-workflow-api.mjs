@@ -25,6 +25,7 @@ import {
   approveRun,
   approveMasterRun,
   readRunMaster,
+  reviseMasterRun,
   createAndRun,
   finalizeRun,
   reconcileBlockedCandidate,
@@ -960,7 +961,23 @@ export function createUiWorkflowApi({
         if (segments.length === 5 && segments[4] === "approve-master" && request.method === "POST") {
           const { runDirectory } = await requireRunDirectory(runId);
           const body = await readJsonBody(request, 64 * 1024);
-          sendJson(response, securityHeaders, 200, await approveMasterRun({ runDirectory, approver: body.approver, masterSha256: body.masterSha256 }));
+          sendJson(response, securityHeaders, 200, await approveMasterRun({
+            runDirectory,
+            approver: body.approver,
+            masterSha256: body.masterSha256,
+            acknowledgeFindings: body.acknowledgeFindings === true,
+          }));
+          return true;
+        }
+        if (segments.length === 5 && segments[4] === "revise-master" && request.method === "POST") {
+          const { runDirectory } = await requireRunDirectory(runId);
+          const body = await readJsonBody(request);
+          sendJson(response, securityHeaders, 200, await reviseMasterRun({
+            runDirectory,
+            currentContract: body.currentContract,
+            sourceFileName: body.sourceFileName,
+            masterSha256: body.masterSha256,
+          }));
           return true;
         }
         if (segments.length === 5 && segments[4] === "approve" && request.method === "POST") {

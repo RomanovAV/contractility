@@ -50,7 +50,9 @@
     "maxParallel": 5,
     "formatRetries": 1,
     "artifactRetries": 2,
-    "stallRounds": 2
+    "stallRounds": 2,
+    "masterMaxFixRounds": 1,
+    "masterReviewerCount": 3
   },
   "storage": {
     "runRoot": "../data/runs",

@@ -72,6 +72,14 @@ function validateMasterReview(review) {
     || review.history.length !== review.round) {
     throw new TypeError("Итог межмодельной проверки мастер-договора повреждён.");
   }
+  if (review.blockingActionItemCount != null
+    && (!Number.isInteger(review.blockingActionItemCount)
+      || !Number.isInteger(review.advisoryActionItemCount)
+      || review.blockingActionItemCount < 0
+      || review.advisoryActionItemCount < 0
+      || review.blockingActionItemCount + review.advisoryActionItemCount !== review.actionItemCount)) {
+    throw new TypeError("Классификация замечаний мастер-договора повреждена.");
+  }
 }
 
 export function validateMasterStructure(master, { requireApproval = true } = {}) {
@@ -116,7 +124,9 @@ export function validateMasterStructure(master, { requireApproval = true } = {})
   if (requireApproval || master.approval != null) {
     if (typeof master.approval?.approver !== "string" || !master.approval.approver.trim()
       || !Number.isFinite(Date.parse(master.approval.approvedAt))
-      || master.approval.sha256 !== master.sha256) {
+      || master.approval.sha256 !== master.sha256
+      || ((master.payload.review?.blockingActionItemCount ?? 0) > 0
+        && master.approval.acknowledgedFindings !== true)) {
       throw new TypeError("Мастер-договор должен быть проверен и подтверждён человеком.");
     }
   }
@@ -125,8 +135,24 @@ export function validateMasterStructure(master, { requireApproval = true } = {})
 
 export async function validateMasterContract(master, options) {
   validateMasterStructure(master, options);
-  if (await masterReviewTargetHash(master.payload) !== master.payload.review.targetSha256) {
-    throw new TypeError("Текст или источники мастер-договора изменены после межмодельной проверки.");
+  const actualReviewTargetSha256 = await masterReviewTargetHash(master.payload);
+  if (actualReviewTargetSha256 !== master.payload.review.targetSha256) {
+    const revisions = master.payload.humanRevisions;
+    const latestRevision = Array.isArray(revisions) ? revisions.at(-1) : null;
+    if (!latestRevision
+      || revisions.some((revision, index) => revision?.schemaVersion !== "contractility.master-human-revision.v1"
+        || !Number.isFinite(Date.parse(revision.revisedAt))
+        || typeof revision.sourceFileName !== "string"
+        || !revision.sourceFileName.trim()
+        || !/^[a-f0-9]{64}$/.test(revision.previousTargetSha256 ?? "")
+        || !/^[a-f0-9]{64}$/.test(revision.currentTargetSha256 ?? "")
+        || !/^[a-f0-9]{64}$/.test(revision.previousMasterSha256 ?? "")
+        || revision.previousTargetSha256 !== (index === 0
+          ? master.payload.review.targetSha256
+          : revisions[index - 1].currentTargetSha256))
+      || latestRevision.currentTargetSha256 !== actualReviewTargetSha256) {
+      throw new TypeError("Текст или источники мастер-договора изменены после межмодельной проверки.");
+    }
   }
   if (await masterFindingsHash(master.payload.review.reports)
     !== master.payload.review.findingsSha256) {

@@ -51,6 +51,8 @@ export async function loadTargetConfig(configPath, { allowPlaceholders = false }
       formatRetries: 1,
       artifactRetries: 2,
       stallRounds: 2,
+      masterMaxFixRounds: 1,
+      masterReviewerCount: 3,
       ...config.review,
     },
     storage: {
@@ -101,6 +103,8 @@ export function validateTargetConfig(config, { allowPlaceholders = false } = {})
     ["formatRetries", 0, 3],
     ["artifactRetries", 0, 5],
     ["stallRounds", 1, 5],
+    ["masterMaxFixRounds", 0, 3],
+    ["masterReviewerCount", 3, 5],
   ]) {
     const value = config.review?.[field];
     if (value != null && (!Number.isInteger(value) || value < minimum || value > maximum)) {
