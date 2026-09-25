@@ -20,6 +20,9 @@ or defined abbreviation is unique from the same document's language, repeated re
 definition. Typical examples are `Bask` -> `Банк` and `CBI`/`CBII` -> `СБП` when the surrounding
 contract text makes the defined term unambiguous. Correct spelling and script; do not rewrite the
 clause, modernize wording, or change its legal meaning.
+Each sourceText and correctedText is limited to 4 whitespace-separated words and 120 characters.
+Keep only the changed word or abbreviation; put explanatory context in reason. Never split a
+substantive rewrite into multiple entries to bypass these limits.
 
 Never automatically change a date, time, amount, percentage, contract/agreement number,
 identifier, certificate, UUID, URL, e-mail, account/requisite, organization/person name,

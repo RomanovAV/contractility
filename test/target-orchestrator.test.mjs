@@ -1829,3 +1829,65 @@ test("master review fixes a confirmed OCR-supported defect and reruns every revi
     delete process.env.FAKE_GIGACODE_MODE;
   }
 });
+
+for (const scenario of ["recovered", "always-invalid", "mutate-evidence"]) {
+  test(`master fix artifact recovery: ${scenario}`, async () => {
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "contractility-master-recovery-"));
+    const legacy = await prepareSimpleCase(temporary);
+    const request = JSON.parse(await readFile(
+      path.join(legacy.caseDirectory, "formation-request.json"), "utf8",
+    ));
+    delete request.inputs.newAgreementEdition;
+    request.workflowStage = "master";
+    const requestPath = path.join(temporary, "master-request.json");
+    await writeFile(requestPath, JSON.stringify(request));
+    const prepared = await prepareCase({
+      requestPath,
+      sources: {
+        "document-1": path.join(temporary, "contract.pdf"),
+        "document-2": path.join(temporary, "amendment.pdf"),
+      },
+      outputRoot: path.join(temporary, "master-cases"),
+    });
+    process.env.FAKE_GIGACODE_MODE = `master-review-fix-once-master-invalid-ocr-${scenario}`;
+    try {
+      const config = targetConfig(path.join(temporary, "runs"), {
+        passEnvironment: ["FAKE_GIGACODE_MODE"],
+      });
+      config.review.artifactRetries = 1;
+      let result;
+      if (scenario === "recovered") {
+        result = await createAndRun({ caseDirectory: prepared.caseDirectory, config });
+        assert.equal(result.state.status, "awaiting-master-approval");
+        assert.equal(result.state.round, 2);
+        const master = await readRunMaster(result.runDirectory);
+        assert.equal(master.payload.ocrCorrections.corrections[0].correctedText, "ДОГОВОР");
+        assert.equal(master.payload.review.reports.every((report) => report.verdict === "pass"), true);
+        const task = JSON.parse(await readFile(
+          path.join(result.runDirectory, "rounds/01/master-review-task-legal-a.json"), "utf8",
+        ));
+        assert.equal(task.targetSha256, undefined);
+        assert.ok(master.payload.review.targetSha256);
+      } else {
+        await assert.rejects(createAndRun({ caseDirectory: prepared.caseDirectory, config }), (error) => {
+          result = error;
+          assert.equal(error.state.status, "failed");
+          assert.match(error.message, scenario === "always-invalid"
+            ? /после 2 попыток[\s\S]*локальной лексической коррекции/
+            : /manifest|манифест/i);
+          return true;
+        });
+        assert.equal(await exists(path.join(result.runDirectory, "master-contract.json")), false);
+      }
+      const events = (await readFile(path.join(result.runDirectory, "events.ndjson"), "utf8"))
+        .trim().split("\n").map((line) => JSON.parse(line));
+      const retries = events.filter((event) => event.event === "gigacode.started"
+        && event.session === "master-fix:1:artifact-retry:1");
+      assert.equal(retries.length, scenario === "mutate-evidence" ? 0 : 1);
+      assert.equal(events.some((event) => event.event === "artifact.recovered"
+        && event.owner === "master-fix:1"), scenario === "recovered");
+    } finally {
+      delete process.env.FAKE_GIGACODE_MODE;
+    }
+  });
+}

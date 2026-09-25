@@ -63,7 +63,9 @@ export function validateOcrCorrections(value, signedDocuments) {
     if (sourceText.length > MAX_FRAGMENT_LENGTH || correctedText.length > MAX_FRAGMENT_LENGTH
       || sourceText.split(/\s+/u).length > MAX_FRAGMENT_WORDS
       || correctedText.split(/\s+/u).length > MAX_FRAGMENT_WORDS) {
-      throw new TypeError(`${field} выходит за пределы локальной лексической коррекции.`);
+      throw new TypeError(`${field} выходит за пределы локальной лексической коррекции: `
+        + `sourceText и correctedText должны содержать не более ${MAX_FRAGMENT_WORDS} слов `
+        + `и ${MAX_FRAGMENT_LENGTH} символов каждый. Оставьте только изменяемый фрагмент.`);
     }
     if (PROTECTED_VALUE_PATTERN.test(sourceText) || PROTECTED_VALUE_PATTERN.test(correctedText)) {
       throw new TypeError(`${field} затрагивает защищённое точное значение.`);

@@ -366,7 +366,7 @@ if (model === "missing-model") {
       verdict: "changes-required",
       findings: [{
         severity: "major",
-        category: "contract-reconstruction",
+        category: mode.includes("master-invalid-ocr") ? "ocr-normalization" : "contract-reconstruction",
         target: "Пункт 1 мастер-договора",
         sourceDocumentId: "document-2",
         page: 1,
@@ -412,6 +412,22 @@ if (model === "missing-model") {
   const currentPath = path.join(process.cwd(), task.paths.currentContract);
   const current = await readFile(currentPath, "utf8");
   await writeFile(currentPath, `${current.trim()}\n\nИсправлено по подтверждённому замечанию.\n`);
+  if (mode.includes("master-invalid-ocr")) {
+    const invalid = !prompt.includes("Repair invalid master artifacts") || mode.includes("always-invalid");
+    await writeFile(path.join(process.cwd(), task.paths.ocrCorrections), JSON.stringify({
+      schemaVersion: "contractility.ocr-corrections.v1",
+      corrections: [{
+        sourceDocumentId: "document-1", page: 1, kind: "lexical", sourceText: "Договор",
+        correctedText: invalid ? "один два три четыре пять" : "ДОГОВОР",
+        basis: "unambiguous-language-context", reason: "Тест локальности OCR-правки.",
+      }],
+      unresolved: [],
+    }));
+    if (mode.includes("mutate-evidence")) {
+      const evidencePath = path.join(process.cwd(), task.paths.evidenceManifest);
+      await writeFile(evidencePath, (await readFile(evidencePath, "utf8")) + "\n");
+    }
+  }
   emit({ status: "master-corrected" });
 } else if (prompt.includes("independent read-only review")) {
   const taskName = prompt.match(/Review task: ([^\s]+)/)?.[1];

@@ -10,6 +10,11 @@ Modify only `artifacts/current-contract.md`, `artifacts/ocr-corrections.json` fo
 finding. Preserve source provenance and the complete unaffected contract text. When adding an OCR
 normalization, record its exact raw fragment, corrected form, document, page, basis, and reason in
 the register before using it in the master text, then parse and validate the register.
+Each sourceText and correctedText must contain at most 4 whitespace-separated words and 120
+characters. Register only the changed word or abbreviation, without the surrounding sentence.
+The source fragment must occur verbatim on the specified raw OCR page. Do not split a substantive
+rewrite into small entries to bypass these limits. Restoring text omitted during reconstruction
+belongs in current-contract.md, not in the lexical OCR register.
 
 Every correction must be directly supported by explicit OCR text. Never infer or normalize a
 date, amount, percentage, identifier, contract number, party detail, signature, or other exact
