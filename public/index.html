@@ -43,7 +43,14 @@
           <div class="source-actions">
             <button id="load-workspace-button" class="text-button" type="button">Загрузить сохранённую сессию</button>
             <button id="add-files-button" class="text-button" type="button" hidden>+ Добавить документы</button>
-            <button id="reset-button" class="text-button danger-text-button" type="button" hidden>Сбросить</button>
+            <details id="source-tools" class="source-tools" hidden>
+              <summary>Другие действия</summary>
+              <div class="source-tools-content">
+                <button id="reprocess-button" class="text-button" type="button" hidden>Распознать заново</button>
+                <button id="save-workspace-early" class="text-button" type="button" hidden>Сохранить сессию</button>
+                <button id="reset-button" class="text-button danger-text-button" type="button" hidden>Сбросить</button>
+              </div>
+            </details>
             <input id="additional-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
             <input id="workspace-file-input" type="file" accept="application/json,.json,.contractility.json" hidden>
           </div>
@@ -59,6 +66,8 @@
 
         <div id="file-summary" class="file-summary" aria-live="polite" hidden></div>
 
+        <details class="secondary-options">
+          <summary>Настройки распознавания</summary>
         <div class="settings-grid">
           <label>
             <span>Качество распознавания</span>
@@ -83,8 +92,9 @@
             </select>
           </label>
         </div>
+        </details>
 
-        <div class="action-row">
+        <div id="ocr-action-row" class="action-row" hidden>
           <button id="start-button" class="primary-button" type="button" disabled>Начать распознавание</button>
           <button id="cancel-button" class="secondary-button" type="button" hidden>Остановить после страницы</button>
           <span id="preflight-note">До запуска выберите страницу ниже и при необходимости поверните её</span>
@@ -145,12 +155,19 @@
         </div>
         <p id="master-status" aria-live="polite">Завершите OCR, чтобы собрать мастер-договор, или загрузите ранее проверенный файл проекта.</p>
         <div class="master-actions">
-          <button id="start-master" class="primary-button" type="button" disabled>Сформировать мастер-договор</button>
+          <button id="start-master" class="primary-button" type="button" hidden disabled>Сформировать мастер-договор</button>
           <button id="load-master" class="secondary-button" type="button">Загрузить проверенный мастер-договор</button>
           <input id="master-file-input" type="file" accept="application/json,.json,.master-contract.json" hidden>
-          <button id="download-master" class="secondary-button" type="button" disabled>Скачать файл проекта</button>
-          <button id="download-master-text" class="secondary-button" type="button" disabled>Скачать текст</button>
-          <button id="load-master-revision" class="secondary-button" type="button" hidden disabled>Загрузить исправленный текст</button>
+          <button id="download-master" class="secondary-button" type="button" hidden disabled>Скачать файл проекта</button>
+          <details id="master-tools" class="action-options" hidden>
+            <summary>Другие действия с мастер-договором</summary>
+            <div class="action-options-content">
+              <button id="download-master-text" class="secondary-button" type="button" disabled>Скачать текст</button>
+              <button id="load-master-revision" class="secondary-button" type="button" hidden disabled>Загрузить исправленный текст</button>
+              <button id="rebuild-master" class="secondary-button" type="button" hidden>Сформировать заново</button>
+              <button id="replace-master" class="secondary-button" type="button">Загрузить другой мастер-договор</button>
+            </div>
+          </details>
           <input id="master-revision-file-input" type="file" accept="text/plain,.txt,.md" hidden>
         </div>
         <div id="master-details" hidden>
@@ -171,7 +188,7 @@
         </div>
       </section>
 
-      <section class="setup-card" aria-labelledby="draft-title">
+      <section id="draft-card" class="setup-card" aria-labelledby="draft-title" hidden>
         <div class="draft-section" aria-labelledby="draft-title">
           <div class="section-heading compact-heading">
             <div><span class="step-number">02</span><div><h2 id="draft-title">Драфт дополнительного соглашения</h2><p>Загрузите Word-файл с требуемыми изменениями. Его форма и оформление станут основой итогового документа.</p></div></div>
@@ -195,9 +212,14 @@
         </div>
         <div class="export-actions">
           <button id="start-formation" class="primary-button" type="button" disabled>Сформировать рекомендованное ДС</button>
-          <button id="save-workspace" class="secondary-button" type="button" disabled>Сохранить сессию</button>
-          <button id="download-json" class="secondary-button" type="button" disabled>Скачать пакет JSON</button>
-          <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
+          <details class="action-options">
+            <summary>Сохранение и экспорт</summary>
+            <div class="action-options-content">
+              <button id="save-workspace" class="secondary-button" type="button" disabled>Сохранить сессию</button>
+              <button id="download-json" class="secondary-button" type="button" disabled>Скачать пакет JSON</button>
+              <button id="download-text" class="secondary-button" type="button" disabled>Скачать пакет TXT</button>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -247,17 +269,20 @@
         <div id="run-blocker" class="run-blocker" role="alert" hidden></div>
 
         <div class="run-actions">
-          <button id="download-diagnostics" class="secondary-button" type="button" disabled>Скачать диагностику</button>
-          <button id="download-candidate" class="secondary-button" type="button" disabled>Скачать кандидат DOCX</button>
+          <button id="download-candidate" class="secondary-button" type="button" hidden disabled>Скачать кандидат DOCX</button>
           <button id="restart-review-cycle" class="secondary-button" type="button" hidden disabled>Новый цикл с исправленным DOCX</button>
           <input id="review-cycle-file-input" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" hidden>
-          <label class="approver-field">
+          <label id="candidate-approver-field" class="approver-field" hidden>
             <span>Проверяющий</span>
             <input id="approver-name" type="text" autocomplete="name" placeholder="ФИО проверяющего" disabled>
           </label>
-          <button id="approve-candidate" class="primary-button" type="button" disabled>Подтвердить хеши</button>
-          <button id="finalize-run" class="primary-button" type="button" disabled>Финализировать</button>
-          <button id="download-final" class="primary-button" type="button" disabled>Скачать финальный DOCX</button>
+          <button id="approve-candidate" class="primary-button" type="button" hidden disabled>Подтвердить хеши</button>
+          <button id="finalize-run" class="primary-button" type="button" hidden disabled>Финализировать</button>
+          <button id="download-final" class="primary-button" type="button" hidden disabled>Скачать финальный DOCX</button>
+          <details id="run-tools" class="action-options">
+            <summary>Диагностика</summary>
+            <div class="action-options-content"><button id="download-diagnostics" class="secondary-button" type="button" disabled>Скачать диагностику</button></div>
+          </details>
         </div>
         <p class="approval-notice">Перед подтверждением заполните все поля, отмеченные нижними подчёркиваниями «________________________». Подтверждение фиксирует проверенные SHA-256 кандидата и замечаний, но не заменяет электронную подпись.</p>
         <p class="model-boundary">Семантическая стадия передаёт содержимое настроенным моделям GigaCode. Допустимость этого контура должна быть подтверждена политикой организации.</p>

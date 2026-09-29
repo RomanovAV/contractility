@@ -43,7 +43,7 @@ h2 { margin-bottom: 0; font-size: 18px; line-height: 1.25; }
 .privacy-card span { color: #50645c; }
 .privacy-icon { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--paper); color: var(--accent); font-size: 20px; }
 
-.workflow-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 0 0 22px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line); box-shadow: var(--shadow); list-style: none; }
+.workflow-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin: 0 0 22px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line); box-shadow: var(--shadow); list-style: none; }
 .workflow-strip li { min-width: 0; display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; align-content: center; min-height: 84px; padding: 14px 16px; background: rgba(255, 255, 255, 0.94); }
 .workflow-strip li > span { grid-row: 1 / 3; width: 34px; height: 34px; display: grid; place-items: center; align-self: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 850; letter-spacing: 0.06em; }
 .workflow-strip strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -60,6 +60,9 @@ h2 { margin-bottom: 0; font-size: 18px; line-height: 1.25; }
 .text-button:disabled { opacity: 0.45; cursor: not-allowed; }
 .danger-text-button { color: var(--danger); }
 .source-actions { display: flex; align-items: center; gap: 8px; }
+.source-tools summary { color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
+.source-tools-content { position: absolute; z-index: 2; display: grid; gap: 8px; min-width: 180px; margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: var(--shadow); }
+.source-tools-content .text-button { text-align: left; }
 
 .drop-zone { min-height: 185px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed #aac6ba; border-radius: 16px; background: #f8fbfa; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, transform 160ms ease; }
 .drop-zone:hover, .drop-zone.dragging { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
@@ -101,6 +104,11 @@ h2 { margin-bottom: 0; font-size: 18px; line-height: 1.25; }
 .replace-draft-button { flex: 0 0 auto; border: 0; background: transparent; color: var(--accent); font-size: 11px; font-weight: 750; cursor: pointer; }
 
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 18px; }
+.secondary-options { margin-top: 18px; }
+.secondary-options summary, .action-options summary { width: fit-content; color: var(--accent-dark); font-size: 12px; font-weight: 700; cursor: pointer; }
+.secondary-options summary:focus-visible, .action-options summary:focus-visible { outline: 3px solid rgba(20, 107, 82, 0.22); outline-offset: 3px; }
+.action-options { flex: 1 1 100%; }
+.action-options-content { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .settings-grid > label { min-height: 76px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 13px; background: #fbfcfb; }
 .settings-grid > label > span:first-child { display: block; margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
 select { width: 100%; border: 0; background: transparent; color: var(--ink); font-weight: 700; cursor: pointer; }
@@ -186,6 +194,9 @@ select { width: 100%; border: 0; background: transparent; color: var(--ink); fon
 .export-card h2 { margin-bottom: 6px; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
 .export-card p:last-child { margin: 0; color: var(--muted); font-size: 12px; }
 .export-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 570px; }
+.export-actions .action-options { text-align: right; }
+.export-actions .action-options summary { margin-left: auto; }
+.export-actions .action-options-content { justify-content: flex-end; }
 .target-status-note { margin-top: 7px !important; font-size: 10px !important; }
 .target-status-note.ready { color: var(--accent) !important; font-weight: 700; }
 .target-status-note.failed { color: var(--danger) !important; font-weight: 700; }

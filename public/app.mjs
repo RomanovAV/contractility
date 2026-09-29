@@ -42,7 +42,7 @@ GlobalWorkerOptions.workerSrc = new URL(
 
 const elements = Object.fromEntries(
   [
-    "start-master", "load-master", "master-file-input", "download-master", "download-master-text", "load-master-revision", "master-revision-file-input",
+    "start-master", "load-master", "master-file-input", "download-master", "download-master-text", "load-master-revision", "master-revision-file-input", "master-tools", "rebuild-master", "replace-master", "draft-card", "candidate-approver-field", "run-tools",
     "master-status", "master-details", "master-text", "master-scope", "master-review-details", "master-review-summary", "master-review-findings", "master-approval", "master-approver", "master-risk-acknowledgement", "master-risk-checkbox", "approve-master", "run-title",
     "add-files-button", "additional-file-input", "approve-candidate", "approver-name",
     "cancel-button", "confidence-badge", "consensus-panel", "consensus-summary",
@@ -58,7 +58,7 @@ const elements = Object.fromEntries(
     "progress-percent", "progress-title", "reset-button", "reset-page-rotation",
     "review-round-label", "reviewers-grid", "rotate-page-left", "rotate-page-right",
     "rotation-select", "run-blocker", "run-detail", "run-id-label", "run-stages",
-    "run-status-badge", "save-workspace", "start-button", "start-formation", "target-status-note",
+    "run-status-badge", "save-workspace", "save-workspace-early", "start-button", "start-formation", "target-status-note", "source-tools", "reprocess-button", "ocr-action-row",
     "viewer-canvas", "viewer-document-label", "viewer-page-label", "viewer-position",
     "viewer-stage", "workspace", "workspace-file-input", "formation-status",
   ].map((id) => [id, document.getElementById(id)]),
@@ -233,8 +233,8 @@ function inputsLocked() {
 function updateFormationState() {
   textEditor.refreshLock();
   renderMaster();
-  const hasOcrResults = completedPageCount() > 0;
-  elements["export-card"].hidden = !hasOcrResults && !state.draftAgreement && !state.masterContract;
+  elements["export-card"].hidden = !state.masterContract?.approval;
+  elements["draft-card"].hidden = !state.masterContract?.approval;
   elements["download-json"].disabled = !isFormationReady();
   elements["download-text"].disabled = !isFormationReady();
   elements["save-workspace"].disabled = !isOcrComplete() || inputsLocked();
@@ -249,6 +249,7 @@ function updateFormationState() {
     formationJobActive: Boolean(state.formationJobId),
   });
   elements["start-formation"].disabled = !launchAvailability.enabled;
+  elements["start-formation"].hidden = !state.masterContract?.approval;
   elements["start-formation"].title = launchAvailability.reason;
 
   elements["formation-status"].textContent = isFormationReady()
@@ -279,9 +280,14 @@ function updateFormationState() {
 function updateStartButtonLabel() {
   const total = totalPageCount();
   const completed = completedPageCount();
-  if (total > 0 && completed === total) {
-    elements["start-button"].textContent = "Распознать заново";
-  } else if (completed > 0) {
+  const complete = isOcrComplete();
+  elements["source-tools"].hidden = total === 0;
+  elements["reprocess-button"].hidden = !complete;
+  elements["reprocess-button"].disabled = inputsLocked();
+  elements["save-workspace-early"].hidden = !complete;
+  elements["save-workspace-early"].disabled = inputsLocked();
+  elements["ocr-action-row"].hidden = total === 0 || (complete && !state.running);
+  if (completed > 0 && !complete) {
     elements["start-button"].textContent = "Распознать новые документы";
   } else {
     elements["start-button"].textContent = "Начать распознавание";
@@ -1504,10 +1510,17 @@ function renderMaster() {
   const master = state.masterContract;
   const locked = inputsLocked() || state.formationBusy;
   elements["start-master"].disabled = !isOcrComplete() || locked || Boolean(state.targetSessionPromise);
+  elements["start-master"].hidden = Boolean(master) || !isOcrComplete();
+  elements["rebuild-master"].hidden = !master || !isOcrComplete();
+  elements["rebuild-master"].disabled = elements["start-master"].disabled;
   elements["load-master"].disabled = locked;
+  elements["load-master"].hidden = Boolean(master);
+  elements["replace-master"].disabled = locked;
   elements["master-file-input"].disabled = locked;
   elements["download-master"].disabled = !master;
+  elements["download-master"].hidden = !master?.approval;
   elements["download-master-text"].disabled = !master;
+  elements["master-tools"].hidden = !master;
   elements["load-master-revision"].hidden = !master || Boolean(master.approval);
   elements["load-master-revision"].disabled = locked || !master || !state.masterRunId
     || Boolean(master.approval);
@@ -1985,9 +1998,7 @@ function renderFormationRun(job) {
   elements["formation-run-card"].querySelector(".approval-notice").hidden = masterStage;
   elements["reviewers-grid"].closest(".review-section").hidden = masterStage
     && !["reviewing-master", "fixing-master"].includes(status);
-  elements["approve-candidate"].closest(".run-actions").querySelectorAll("button, label").forEach((element) => {
-    element.hidden = masterStage && element.id !== "download-diagnostics";
-  });
+  elements["run-tools"].hidden = masterStage;
   renderRunStages(runState);
   renderReviewers(run);
   renderGigacodeStatus(run?.gigacodeStatus ?? null);
@@ -2010,16 +2021,21 @@ function renderFormationRun(job) {
   const canApproveCandidate = awaitingApproval || blockedCandidateDecision;
   elements["download-diagnostics"].disabled = !state.formationRunId;
   elements["download-candidate"].disabled = !candidateReady;
+  elements["download-candidate"].hidden = masterStage || !candidateReady || finalized;
   elements["restart-review-cycle"].hidden = !blockedCandidateDecision;
   elements["restart-review-cycle"].disabled = !blockedCandidateDecision;
   elements["approver-name"].disabled = !canApproveCandidate;
+  elements["candidate-approver-field"].hidden = masterStage || !canApproveCandidate;
   elements["approve-candidate"].textContent = blockedCandidateDecision
     ? "Принять решение и продолжить"
     : "Подтвердить хеши";
   elements["approve-candidate"].disabled = !canApproveCandidate
     || !elements["approver-name"].value.trim();
+  elements["approve-candidate"].hidden = masterStage || !canApproveCandidate;
   elements["finalize-run"].disabled = !approved;
+  elements["finalize-run"].hidden = masterStage || !approved;
   elements["download-final"].disabled = !finalized;
+  elements["download-final"].hidden = masterStage || !finalized;
 
   if (job.status === "failed" || status === "failed") {
     setRunStatus("Ошибка", job.error ?? runState?.error ?? "Запуск завершился с ошибкой.", "failed");
@@ -2432,6 +2448,8 @@ elements["review-cycle-file-input"].addEventListener("change", (event) => {
     });
 });
 elements["reset-button"].addEventListener("click", resetDocuments);
+elements["reprocess-button"].addEventListener("click", runOcr);
+elements["save-workspace-early"].addEventListener("click", () => elements["save-workspace"].click());
 elements["start-button"].addEventListener("click", runOcr);
 elements["cancel-button"].addEventListener("click", () => {
   state.cancelRequested = true;
@@ -2519,7 +2537,9 @@ elements["download-text"].addEventListener("click", () => {
   }
 });
 elements["start-master"].addEventListener("click", () => launchFormation("master").catch((error) => setError(error.message)));
+elements["rebuild-master"].addEventListener("click", () => elements["start-master"].click());
 elements["load-master"].addEventListener("click", () => elements["master-file-input"].click());
+elements["replace-master"].addEventListener("click", () => elements["load-master"].click());
 elements["master-file-input"].addEventListener("change", (event) => loadMasterFile(event.target.files[0]));
 elements["master-approver"].addEventListener("input", renderMaster);
 elements["master-risk-checkbox"].addEventListener("input", renderMaster);
